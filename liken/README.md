@@ -44,7 +44,7 @@ This list is the whole state of the fork. Keep it current.
 | commit | change | upstream |
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
-| 16ab652 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | not yet opened |
+| 16ab652 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
 
 The upstream column holds the pull request, or `liken only` for a
 change that stays here.
