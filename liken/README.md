@@ -24,14 +24,14 @@ is a fetch from upstream and a push:
 `liken` is the default branch. It is `main` plus a short stack of
 commits, in this order:
 
-1. The bottom commit adds the fork's own files and nothing else:
+1. The bottom commits add the fork's own files and nothing else:
    this directory, `AGENTS.md`, and `.github/workflows/liken.yaml`.
-2. Each commit above it is one change to Corrosion, and each one has
-   an open pull request against upstream. The commit message names
-   the pull request.
+2. Each commit above them is one change to Corrosion, and each one
+   has an open pull request against upstream. The commit message
+   names the pull request.
 
-Upstream's files are never edited on the bottom commit, so that
-commit never conflicts with a sync.
+Upstream's files are never edited on the bottom commits, so those
+commits never conflict with a sync.
 
 ## The stack
 
@@ -39,7 +39,7 @@ This list is the whole state of the fork. Keep it current.
 
 | commit | change | upstream |
 |---|---|---|
-| (bottom) | the fork's files | never |
+| (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
 
 ## Adding a change
 
@@ -60,7 +60,8 @@ and push:
 
 ## Moving to a newer upstream
 
-Sync `main`, then rebase the stack onto it:
+Sync `main`, then rebase the stack onto it. `make -C liken sync`
+runs these four commands:
 
     git fetch upstream main
     git push origin upstream/main:main
@@ -84,6 +85,24 @@ calendar scheme, `2026.09.09-001`, and the workflow builds
 
     git tag 2026.09.09-001
     git push origin 2026.09.09-001
+
+`make -C liken release` picks today's next serial and runs those two
+commands. `make -C liken image` builds the same image on a
+workstation as `ghcr.io/liken-sh/corrosion:local`.
+
+## The build
+
+`liken/Dockerfile` builds in three stages with cargo-chef, so the
+registry cache at `ghcr.io/liken-sh/corrosion:buildcache` keeps the
+compiled dependencies between runs. A commit that touches only the
+workspace's own crates compiles those crates and nothing else. A
+change to `Cargo.lock` or a manifest compiles the dependencies once
+more, and the next run keeps that too.
+
+The image is distroless, not `scratch`. Corrosion embeds a prebuilt
+cr-sqlite shared object and loads it at run time, and that object
+needs glibc and libgcc. A static musl binary could not load it, so
+the smallest base that runs it is `distroless/cc`.
 
 A consumer pins the image by digest, and the digest moves only when
 the consumer chooses to move it. So a Corrosion change reaches a

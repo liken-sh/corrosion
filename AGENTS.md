@@ -10,8 +10,8 @@ you change anything, and keep its stack table current.
 - Every change to Corrosion starts as a branch from `main` and a
   pull request to superfly/corrosion. Only then does it join the
   `liken` stack, by cherry-pick.
-- The bottom commit of the stack is the only commit that touches
-  fork-only files, and it touches nothing of upstream's. Do not edit
+- The bottom commits of the stack are the only commits that touch
+  fork-only files, and they touch nothing of upstream's. Do not edit
   upstream's README, workflows, or Cargo profiles there.
 - Do not merge `main` into `liken`. Rebase.
 - Do not tag from any branch except `liken`.
