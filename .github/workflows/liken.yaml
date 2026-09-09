@@ -1,0 +1,115 @@
+# The fork's own workflow. It builds the image at liken/Dockerfile and
+# publishes it to ghcr.io/liken-sh/corrosion. Upstream's workflows
+# stay in the tree untouched and are disabled in this repository's
+# Actions settings, so this is the only workflow that runs here.
+#
+# A pushed tag cuts a release: the tag names a version in liken's
+# calendar scheme, 2026.09.09-001, and the image ships under that tag
+# and :latest. A push to the liken branch cuts a development build:
+# the version is the most recent release tag plus a suffix,
+# 2026.09.09-001-dev-003-abcdef01, where 003 counts the commits since
+# that release and abcdef01 is this commit. The suffix sorts after
+# its release and before the next one, so a registry listing reads
+# in order. A development build never moves :latest, so a cluster
+# that pulls a release keeps pulling releases.
+#
+# There is no test gate here. The commits on the liken branch are
+# upstream's, which upstream's CI tested, plus the fork's stack, and
+# each commit in the stack has an upstream pull request that runs
+# the same CI. liken/README.md explains the stack.
+name: liken
+
+on:
+  push:
+    branches: [liken]
+    tags: ["**"]
+
+permissions:
+  contents: read
+  packages: write
+
+# One release at a time. Two runs that pushed :latest at once would
+# leave whichever finished second, which is not always the newer one.
+concurrency:
+  group: liken
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # The checkout fetches the whole history, because git describe
+      # below needs the tags.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The version comes from the event. A tag names it, and a tag of
+      # any other shape stops the run before a build spends anything,
+      # so no image ships under a name no cluster can order against
+      # the others. Upstream's own tags, v0.1.0 and the like, arrived
+      # with the fork and never push here, so they never reach this
+      # check. A push to the liken branch derives the version: git
+      # describe finds the most recent release tag and counts the
+      # commits since it, and the first eight characters of the
+      # commit sha make the build traceable.
+      - name: Name the version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "$GITHUB_REF_NAME" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{3}$' || {
+              echo "the tag '$GITHUB_REF_NAME' is not a release version; a release tag looks like 2026.09.09-001"
+              exit 1
+            }
+            echo "VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          else
+            if described=$(git describe --tags --long --match '[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9][0-9]' 2>/dev/null); then
+              release=${described%-*-g*}
+              count=${described#"$release"-}
+              count=${count%-g*}
+            else
+              # Before the first release there is no tag to count from.
+              # Serial 000 is liken's stand-in that never ships.
+              release=0000.00.00-000
+              count=$(git rev-list --count HEAD)
+            fi
+            echo "VERSION=$(printf '%s-dev-%03d-%s' "$release" "$count" "${GITHUB_SHA:0:8}")" >> "$GITHUB_ENV"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The build reads and writes the :buildcache tag beside the
+      # image, so a tag's release of a commit whose development build
+      # already ran here rebuilds nothing. The context is the whole
+      # checkout, because the Dockerfile compiles the tree it sits in.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: liken/Dockerfile
+          load: true
+          cache-from: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache
+          cache-to: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache,mode=max
+          tags: |
+            ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
+            ghcr.io/liken-sh/corrosion:latest
+
+      # The runner has no peers, so nothing here replicates. What can
+      # break invisibly is the dynamic closure, so the binary proves
+      # that it loads its libraries by answering one flag.
+      - name: Prove the image
+        run: docker run --rm "ghcr.io/liken-sh/corrosion:$VERSION" --version
+
+      # A release moves :latest. A development build pushes only its
+      # own version, so :latest always names a release.
+      - name: Push the image
+        run: |
+          docker push "ghcr.io/liken-sh/corrosion:$VERSION"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            docker push ghcr.io/liken-sh/corrosion:latest
+          fi
+          echo "ghcr.io/liken-sh/corrosion:$VERSION" >> "$GITHUB_STEP_SUMMARY"
