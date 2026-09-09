@@ -10,8 +10,12 @@ exists for two reasons:
 2. To run a small stack of changes in a cluster before upstream
    merges them.
 
-It is a shallow fork. Every change on it is on its way upstream, and
-the fork carries nothing that upstream would refuse.
+It is a shallow fork, and it stays faithful to upstream. It carries
+no feature or usability changes, and it never rearranges upstream's
+code. Each change on the stack is one small, self-contained
+performance commit. A change that anyone who runs Corrosion would
+want goes upstream as a pull request; a change that serves only
+liken's use stays on the stack. `AGENTS.md` states these rules.
 
 ## The branches
 
@@ -26,9 +30,9 @@ commits, in this order:
 
 1. The bottom commits add the fork's own files and nothing else:
    this directory, `AGENTS.md`, and `.github/workflows/liken.yaml`.
-2. Each commit above them is one change to Corrosion, and each one
-   has an open pull request against upstream. The commit message
-   names the pull request.
+2. Each commit above them is one change to Corrosion. A universal
+   change has a pull request against upstream, and the commit
+   message names it. A liken-only change says so in its message.
 
 Upstream's files are never edited on the bottom commits, so those
 commits never conflict with a sync.
@@ -41,18 +45,24 @@ This list is the whole state of the fork. Keep it current.
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
 
+The upstream column holds the pull request, or `liken only` for a
+change that stays here.
+
 ## Adding a change
 
-Cut the branch for the change from `main`, not from `liken`, so the
+Cut the branch for the change from `main`, not from `liken`, so a
 pull request carries nothing from this fork:
 
     git checkout -b <slug> main
     # make the change, run the tests
     git push origin <slug>
+
+If the change is universal, open the pull request from that branch:
+
     gh pr create --repo superfly/corrosion --base main --head liken-sh:<slug>
 
-Then put the same commit on the stack, list it in the table above,
-and push:
+Either way, put the same commit on the stack, list it in the table
+above, and push:
 
     git checkout liken
     git cherry-pick <slug>
@@ -69,7 +79,8 @@ runs these four commands:
     git push --force-with-lease origin liken
 
 A commit whose pull request upstream merged drops out of the stack
-during the rebase. Remove its row from the table.
+during the rebase. Remove its row from the table. A liken-only
+commit stays until upstream makes it unnecessary.
 
 The `liken` branch is the one branch in the liken organization that
 rewrites its history, because a stack has to move. The clusters pin
