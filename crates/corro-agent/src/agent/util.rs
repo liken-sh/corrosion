@@ -53,7 +53,7 @@ use foca::Member;
 use http::StatusCode;
 use metrics::{counter, histogram};
 use rangemap::{RangeInclusiveMap, RangeInclusiveSet};
-use rusqlite::{named_params, params, Connection, OptionalExtension};
+use rusqlite::{named_params, params, Connection};
 use serde_json::json;
 use spawn::spawn_counted;
 use sqlite_pool::{Committable, InterruptibleTransaction};
@@ -627,18 +627,29 @@ async fn find_fully_buffered_partials(
     })
 }
 
+/// How many orphaned versions one query of `__corro_buffered_changes`
+/// returns to the sweep. The sweep queries again after it clears a full
+/// batch, so the number bounds one query and not the sweep.
+const ORPHAN_BATCH: usize = 100;
+
 /// Clean up `__corro_buffered_changes` rows for versions that have been fully applied.
 /// `__corro_seq_bookkeeping` is managed through the bookie via `insert_partials_db`/`insert_db`.
 ///
+/// Versions to clear arrive on `rx_partials` as they are applied. A sweep
+/// at startup and every five minutes clears orphans: buffered rows whose
+/// version has no bookkeeping left, which an agent that stopped before the
+/// channel delivered them leaves behind. The sweep runs until the table
+/// holds no orphan, because a batch of one per tick never catches up on
+/// an agent that lives for minutes.
 pub async fn clear_buffered_meta_loop(
     agent: Agent,
     mut rx_partials: CorroReceiver<(ActorId, CrsqlDbVersionRange)>,
     mut tripwire: Tripwire,
 ) {
     let tx_timeout: Duration = Duration::from_secs(agent.config().perf.sql_tx_timeout as u64);
-    // check for orphaned buffered changes every 5 minutes
+    // check for orphaned buffered changes at startup and every 5 minutes
     let mut retry_interval = tokio::time::interval(Duration::from_secs(5 * 60));
-    retry_interval.tick().await;
+    let mut sweep: Option<tokio::task::JoinHandle<()>> = None;
 
     loop {
         let (actor_id, versions) = tokio::select! {
@@ -649,14 +660,15 @@ pub async fn clear_buffered_meta_loop(
                 None => break,
             },
             _ = retry_interval.tick() => {
-                match find_orphaned_buffered_changes(&agent).await {
-                    Ok(Some((actor_id, version))) => (actor_id, CrsqlDbVersionRange::single(version)),
-                    Ok(None) => continue,
-                    Err(e) => {
-                        warn!("could not query for orphaned buffered changes: {e}");
-                        continue;
-                    }
+                if sweep.as_ref().is_some_and(|handle| !handle.is_finished()) {
+                    continue;
                 }
+                sweep = Some(spawn_counted(sweep_orphaned_buffered_changes(
+                    agent.clone(),
+                    tx_timeout,
+                    tripwire.clone(),
+                )));
+                continue;
             }
         };
 
@@ -670,62 +682,124 @@ pub async fn clear_buffered_meta_loop(
             }
         }
 
-        let pool = agent.pool().clone();
-        let self_actor_id = agent.actor_id();
-        let mut task_tripwire = tripwire.clone();
-        spawn_counted(async move {
-            loop {
-                let res = {
-                    let mut conn = pool.write_low().await?;
+        spawn_counted(clear_buffered_changes(
+            agent.clone(),
+            tx_timeout,
+            actor_id,
+            versions,
+            tripwire.clone(),
+        ));
+    }
+}
 
-                    block_in_place(|| {
-                        let tx = InterruptibleTransaction::new(
-                            conn.immediate_transaction()?,
-                            Some(tx_timeout),
-                            "clear_buffered_meta",
-                        );
+/// Delete the buffered rows of an actor's versions, `TO_CLEAR_COUNT` rows
+/// per transaction with a pause between, so a large version never holds
+/// the write connection for long.
+async fn clear_buffered_changes(
+    agent: Agent,
+    tx_timeout: Duration,
+    actor_id: ActorId,
+    versions: CrsqlDbVersionRange,
+    mut tripwire: Tripwire,
+) -> eyre::Result<()> {
+    let pool = agent.pool().clone();
+    let self_actor_id = agent.actor_id();
+    loop {
+        let res = {
+            let mut conn = pool.write_low().await?;
 
-                        let buf_count = tx
-                            .prepare_cached("DELETE FROM __corro_buffered_changes WHERE (site_id, db_version, seq) IN (SELECT site_id, db_version, seq FROM __corro_buffered_changes WHERE site_id = ? AND db_version >= ? AND db_version <= ? LIMIT ?)")?
-                            .execute(params![actor_id, versions.start(), versions.end(), TO_CLEAR_COUNT])?;
+            block_in_place(|| {
+                let tx = InterruptibleTransaction::new(
+                    conn.immediate_transaction()?,
+                    Some(tx_timeout),
+                    "clear_buffered_meta",
+                );
 
-                        tx.commit()?;
+                let buf_count = tx
+                    .prepare_cached("DELETE FROM __corro_buffered_changes WHERE (site_id, db_version, seq) IN (SELECT site_id, db_version, seq FROM __corro_buffered_changes WHERE site_id = ? AND db_version >= ? AND db_version <= ? LIMIT ?)")?
+                    .execute(params![actor_id, versions.start(), versions.end(), TO_CLEAR_COUNT])?;
 
-                        Ok::<_, rusqlite::Error>(buf_count)
-                    })
-                };
+                tx.commit()?;
 
-                match res {
-                    Ok(buf_count) => {
-                        if buf_count > 0 {
-                            assert_sometimes!(true, "Corrosion clears buffered meta");
-                            info!(%actor_id, %self_actor_id, "cleared {buf_count} buffered change rows for versions {versions:?}");
-                        }
-                        if buf_count < TO_CLEAR_COUNT {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!(%actor_id, "could not clear buffered meta for versions {versions:?}: {e}");
-                    }
+                Ok::<_, rusqlite::Error>(buf_count)
+            })
+        };
+
+        match res {
+            Ok(buf_count) => {
+                if buf_count > 0 {
+                    assert_sometimes!(true, "Corrosion clears buffered meta");
+                    info!(%actor_id, %self_actor_id, "cleared {buf_count} buffered change rows for versions {versions:?}");
                 }
-
-                tokio::select! {
-                    _ = &mut task_tripwire => {
-                        break;
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                if buf_count < TO_CLEAR_COUNT {
+                    break;
                 }
             }
+            Err(e) => {
+                error!(%actor_id, "could not clear buffered meta for versions {versions:?}: {e}");
+            }
+        }
 
-            Ok::<_, eyre::Report>(())
-        });
+        tokio::select! {
+            _ = &mut tripwire => {
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// Clear every orphaned version, one batch after another, until a query
+/// finds none. A version the bookie still holds as partial is not an
+/// orphan and is left alone.
+async fn sweep_orphaned_buffered_changes(agent: Agent, tx_timeout: Duration, tripwire: Tripwire) {
+    loop {
+        let orphans = match find_orphaned_buffered_changes(&agent, ORPHAN_BATCH).await {
+            Ok(orphans) => orphans,
+            Err(e) => {
+                warn!("could not query for orphaned buffered changes: {e}");
+                return;
+            }
+        };
+        let found = orphans.len();
+
+        for (actor_id, version) in orphans {
+            if tripwire.is_shutting_down() {
+                return;
+            }
+            let still_partial = agent
+                .bookie()
+                .get(&actor_id)
+                .is_some_and(|booked| booked.read().get_partial(&version).is_some());
+            if still_partial {
+                continue;
+            }
+            if let Err(e) = clear_buffered_changes(
+                agent.clone(),
+                tx_timeout,
+                actor_id,
+                CrsqlDbVersionRange::single(version),
+                tripwire.clone(),
+            )
+            .await
+            {
+                error!(%actor_id, %version, "could not clear orphaned buffered changes: {e}");
+                return;
+            }
+        }
+
+        if found < ORPHAN_BATCH {
+            return;
+        }
     }
 }
 
 async fn find_orphaned_buffered_changes(
     agent: &Agent,
-) -> Result<Option<(ActorId, CrsqlDbVersion)>, ChangeError> {
+    limit: usize,
+) -> Result<Vec<(ActorId, CrsqlDbVersion)>, ChangeError> {
     let conn = agent.pool().read().await.map_err(ChangeError::SqlitePool)?;
     block_in_place(|| {
         conn.prepare_cached(
@@ -735,11 +809,11 @@ async fn find_orphaned_buffered_changes(
                  SELECT 1 FROM __corro_seq_bookkeeping bk
                  WHERE bk.site_id = bc.site_id AND bk.db_version = bc.db_version
              )
-             LIMIT 1",
+             LIMIT ?1",
         )
         .and_then(|mut stmt| {
-            stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?)))
-                .optional()
+            stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(|source| ChangeError::Rusqlite {
             source,
@@ -1808,4 +1882,84 @@ fn is_pow_10(i: u64) -> bool {
         i,
         1 | 10 | 100 | 1000 | 10000 | 1000000 | 10000000 | 100000000
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::setup;
+    use corro_types::config::Config;
+
+    // A buffered row of one actor's version, with no bookkeeping unless
+    // the test writes it.
+    fn buffer_row(
+        tx: &rusqlite::Transaction,
+        actor_id: ActorId,
+        version: u64,
+        seq: u64,
+    ) -> rusqlite::Result<()> {
+        tx.execute(
+            "INSERT INTO __corro_buffered_changes
+                (\"table\", pk, cid, val, col_version, db_version, site_id, seq, cl, ts)
+             VALUES ('tests', X'01', 'text', 'buffered', 1, ?1, ?2, ?3, 1, '0')",
+            params![version, actor_id, seq],
+        )?;
+        Ok(())
+    }
+
+    // The sweep drops every buffered row whose version has no bookkeeping,
+    // across more versions than one query returns, and keeps the rows of a
+    // version that is still partial.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn sweep_clears_orphans_and_keeps_partials() -> eyre::Result<()> {
+        _ = tracing_subscriber::fmt::try_init();
+        let (tripwire, _tripwire_worker, _tripwire_tx) = Tripwire::new_simple();
+        let dir = tempfile::tempdir()?;
+
+        let config = Config::builder()
+            .db_path(dir.path().join("corrosion.db").display().to_string())
+            .gossip_addr("127.0.0.1:0".parse()?)
+            .api_addr("127.0.0.1:0".parse()?)
+            .build()?;
+        let (agent, _agent_options) = setup(config, tripwire.clone()).await?;
+
+        let orphan = ActorId(uuid::Uuid::new_v4());
+        let partial = ActorId(uuid::Uuid::new_v4());
+        let orphan_versions = (ORPHAN_BATCH + 5) as u64;
+        {
+            let mut conn = agent.pool().write_priority().await?;
+            let tx = conn.transaction()?;
+            for version in 1..=orphan_versions {
+                for seq in 0..3 {
+                    buffer_row(&tx, orphan, version, seq)?;
+                }
+            }
+            for seq in 0..3 {
+                buffer_row(&tx, partial, 1, seq)?;
+            }
+            tx.execute(
+                "INSERT INTO __corro_seq_bookkeeping
+                    (site_id, db_version, start_seq, end_seq, last_seq, ts)
+                 VALUES (?1, 1, 0, 2, 9, '0')",
+                params![partial],
+            )?;
+            tx.commit()?;
+        }
+
+        sweep_orphaned_buffered_changes(agent.clone(), Duration::from_secs(5), tripwire.clone())
+            .await;
+
+        let conn = agent.pool().read().await?;
+        let count = |actor_id: ActorId| -> rusqlite::Result<i64> {
+            conn.query_row(
+                "SELECT count(*) FROM __corro_buffered_changes WHERE site_id = ?1",
+                [actor_id],
+                |row| row.get(0),
+            )
+        };
+        assert_eq!(count(orphan)?, 0);
+        assert_eq!(count(partial)?, 3);
+
+        Ok(())
+    }
 }
