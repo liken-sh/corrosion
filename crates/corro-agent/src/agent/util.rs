@@ -695,19 +695,27 @@ pub async fn clear_buffered_meta_loop(
             tx_timeout,
             actor_id,
             versions,
+            CLEAR_PAUSE,
             tripwire.clone(),
         ));
     }
 }
 
+/// The pause between two chunks of a clear that runs beside live
+/// changes. The sweep passes zero: it runs on the low-priority write
+/// connection, which already yields to every other writer, and a copy
+/// with a million orphans has to drain within one short-lived agent.
+const CLEAR_PAUSE: Duration = Duration::from_secs(2);
+
 /// Delete the buffered rows of an actor's versions, `TO_CLEAR_COUNT` rows
-/// per transaction with a pause between, so a large version never holds
+/// per transaction with `pause` between, so a large version never holds
 /// the write connection for long.
 async fn clear_buffered_changes(
     agent: Agent,
     tx_timeout: Duration,
     actor_id: ActorId,
     versions: CrsqlDbVersionRange,
+    pause: Duration,
     mut tripwire: Tripwire,
 ) -> eyre::Result<()> {
     let pool = agent.pool().clone();
@@ -752,7 +760,7 @@ async fn clear_buffered_changes(
             _ = &mut tripwire => {
                 break;
             }
-            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+            _ = tokio::time::sleep(pause) => {}
         }
     }
 
@@ -789,6 +797,7 @@ async fn sweep_orphaned_buffered_changes(agent: Agent, tx_timeout: Duration, tri
                 tx_timeout,
                 actor_id,
                 CrsqlDbVersionRange::single(version),
+                Duration::ZERO,
                 tripwire.clone(),
             )
             .await
