@@ -15,7 +15,7 @@ sync:
 
 # The image, built the way the workflow builds it, tagged for a
 # workstation. The context is the repository, because the Dockerfile
-# compiles the tree it sits in.
+# compiles the tree in that context.
 image:
 	docker build --file $(CURDIR)/Dockerfile --tag ghcr.io/liken-sh/corrosion:local $(CURDIR)/..
 

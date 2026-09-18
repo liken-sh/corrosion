@@ -10,7 +10,7 @@ exists for two reasons:
 2. To run a small stack of changes in a cluster before upstream
    merges them.
 
-It is a shallow fork, and it stays faithful to upstream. It carries
+It is a shallow fork, and it stays faithful to upstream. It includes
 no feature or usability changes, and it never rearranges upstream's
 code. Each change on the stack is one small, self-contained
 performance commit. A change that anyone who runs Corrosion would
@@ -45,17 +45,17 @@ This list is the whole state of the fork. Keep it current.
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
 | 16ab652 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
-| de65c10 | how long a down member stays remembered and announced to becomes `gossip.remove_down_after_secs`, two days by default | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
+| de65c10 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
 | 8a1e823 | the buffered-change sweep clears every orphaned version at startup and on each tick, not one per five minutes | liken only |
 | 2d17dfd1 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 
-The upstream column holds the pull request, or `liken only` for a
+The upstream column lists the pull request, or `liken only` for a
 change that stays here.
 
 ## Adding a change
 
 Cut the branch for the change from `main`, not from `liken`, so a
-pull request carries nothing from this fork:
+pull request contains no commits from this fork:
 
     git checkout -b <slug> main
     # make the change, run the tests
@@ -122,7 +122,7 @@ the smallest base that runs it is `distroless/cc`.
 A consumer pins the image by digest, and the digest moves only when
 the consumer chooses to move it. So a Corrosion change reaches a
 cluster in two releases: one here, then one in the operator that
-carries the new digest.
+references the new digest.
 
 ## Upstream's workflows
 
