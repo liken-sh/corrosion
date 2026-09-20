@@ -4,6 +4,10 @@ This is a shallow fork of superfly/corrosion. `liken/README.md` explains
 the branches, the stack, and the release. Read it before you change
 anything, and keep its stack table current.
 
+`main` mirrors upstream and takes no commits. The `liken` branch has the
+fork's own work, so treat `liken` as this repository's main branch in any
+process that names one.
+
 ## What the fork is for
 
 The fork exists to control the image build and to keep performance
