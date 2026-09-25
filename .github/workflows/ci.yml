@@ -20,7 +20,7 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-26.04
 
     runs-on: ${{ matrix.os }}
 
@@ -72,7 +72,7 @@ jobs:
 
   book-test:
     name: Build book
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write  # To push a branch
       pull-requests: write  # To create a PR from that branch
