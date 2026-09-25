@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       # The checkout fetches the whole history, because git describe
       # below needs the tags.
