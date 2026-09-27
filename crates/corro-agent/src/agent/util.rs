@@ -635,19 +635,24 @@ const ORPHAN_BATCH: usize = 100;
 /// Clean up `__corro_buffered_changes` rows for versions that have been fully applied.
 /// `__corro_seq_bookkeeping` is managed through the bookie via `insert_partials_db`/`insert_db`.
 ///
-/// Versions to clear arrive on `rx_partials` as they are applied. A sweep
-/// at startup and every five minutes clears orphans: buffered rows whose
-/// version has no bookkeeping left, which an agent that stopped before the
-/// channel delivered them leaves behind. The sweep runs until the table
-/// holds no orphan, because a batch of one per tick never catches up on
-/// an agent that lives for minutes.
+/// Versions to clear arrive on `rx_partials` as they are applied. An
+/// orphan is a buffered row whose version has no bookkeeping left and that
+/// no message on the channel names. The sweep at startup clears the
+/// orphans of an agent that stopped before the channel delivered them. The
+/// sweep every five minutes is a backstop for the orphans a running agent
+/// makes, and no event follows them: a `try_send` that a full channel
+/// refuses, a clear that gets no write connection, and a sweep that stops
+/// on a query error. The sweep runs until the table holds no orphan,
+/// because a batch of one per tick never catches up on an agent that lives
+/// for minutes. On an agent with no orphans, a tick costs one read query.
 pub async fn clear_buffered_meta_loop(
     agent: Agent,
     mut rx_partials: CorroReceiver<(ActorId, CrsqlDbVersionRange)>,
     mut tripwire: Tripwire,
 ) {
     let tx_timeout: Duration = Duration::from_secs(agent.config().perf.sql_tx_timeout as u64);
-    // check for orphaned buffered changes at startup and every 5 minutes
+    // The first tick completes at once, so the sweep runs at startup and
+    // then every 5 minutes.
     let mut retry_interval = tokio::time::interval(Duration::from_secs(5 * 60));
     let mut sweep: Option<tokio::task::JoinHandle<()>> = None;
 
