@@ -46,8 +46,8 @@ This list is the whole state of the fork. Keep it current.
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
 | 16ab652 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
 | de65c10 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
-| 8a1e823 | the buffered-change sweep clears every orphaned version at startup and on each tick, not one per five minutes | liken only |
-| 2d17dfd1 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
+| a700ba06 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
+| 911d12a2 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 
 The upstream column lists the pull request, or `liken only` for a
 change that stays here.
