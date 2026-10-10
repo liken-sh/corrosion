@@ -44,10 +44,10 @@ This list is the whole state of the fork. Keep it current.
 | commit | change | upstream |
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
-| 16ab652 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
-| de65c10 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
-| a700ba06 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
-| 911d12a2 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
+| 7c5ed05 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
+| 3135bb2 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
+| dc91cd01 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
+| fc2a368f | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 
 The upstream column lists the pull request, or `liken only` for a
 change that stays here.
