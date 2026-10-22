@@ -21,8 +21,8 @@ deadpool = "0.12.0"
 deadpool-sqlite = "0.12.0"
 papaya = "0.2.3"
 bincode = "2.0"
-build-info = "0.0.35"
-build-info-build = { version = "0.0.35" }
+build-info = "0.0.47"
+build-info-build = { version = "0.0.47" }
 bytes = "1.4.0"
 camino = {version = "1.1.4", features = ["serde1"] }
 clap = { version = "4.2.4", features = ["derive"] }
