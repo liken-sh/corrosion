@@ -49,6 +49,7 @@ This list is the whole state of the fork. Keep it current.
 | dc91cd01 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
 | fc2a368f | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 | a42542eb | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
+| 3308fccb | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
 
 The upstream column lists the pull request, or `liken only` for a
 change that stays here.
