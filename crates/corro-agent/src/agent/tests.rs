@@ -38,7 +38,7 @@ use corro_types::{
     actor::{ActorId, MemberId},
     api::{ExecResponse, ExecResult, Statement},
     base::{dbsr, dbsri, dbvri, CrsqlDbVersion, CrsqlDbVersionRange, CrsqlSeq, CrsqlSeqRange},
-    broadcast::{ChangeSource, ChangeV1, Changeset},
+    broadcast::{ChangeSource, ChangeV1, Changeset, FocaInput},
     config::Config,
     sync::generate_sync,
 };
@@ -1581,6 +1581,74 @@ async fn test_leaving_member_is_down_before_suspicion() -> eyre::Result<()> {
     let left = Duration::from_secs(5);
     wait_for_members(&ta1.agent, &[id2], left).await?;
     wait_for_members(&ta2.agent, &[id1], left).await?;
+
+    leaver_worker.await?;
+    tripwire_tx.send(()).await.ok();
+    tripwire_worker.await;
+    wait_for_all_pending_handles().await;
+
+    Ok(())
+}
+
+/// Waits until the SWIM runtime loop of `agent` ends, which drops the
+/// receiving end of its input channel.
+async fn wait_for_swim_exit(agent: &Agent, wait: Duration) -> eyre::Result<()> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let size = std::num::NonZeroU32::new(1).unwrap();
+        if let Err(mpsc::error::TrySendError::Closed(_)) =
+            agent.tx_foca().try_send(FocaInput::ClusterSize(size))
+        {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            eyre::bail!("{} still runs SWIM after {wait:?}", agent.actor_id());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_leave_ends_when_every_member_confirms() -> eyre::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+    let (tripwire, tripwire_worker, tripwire_tx) = Tripwire::new_simple();
+    let (leaver_tripwire, leaver_worker, leaver_tx) = Tripwire::new_simple();
+
+    let ta1 = launch_test_agent(|conf| conf.build(), tripwire.clone()).await?;
+    let ta2 = launch_test_agent(
+        |conf| {
+            conf.bootstrap(vec![ta1.agent.gossip_addr().to_string()])
+                .build()
+        },
+        tripwire.clone(),
+    )
+    .await?;
+    let leaver = launch_test_agent(
+        |conf| {
+            conf.bootstrap(vec![ta1.agent.gossip_addr().to_string()])
+                .build()
+        },
+        leaver_tripwire.clone(),
+    )
+    .await?;
+
+    let (id1, id2, leaver_id) = (
+        ta1.agent.actor_id(),
+        ta2.agent.actor_id(),
+        leaver.agent.actor_id(),
+    );
+    let joined = Duration::from_secs(10);
+    wait_for_members(&ta1.agent, &[id2, leaver_id], joined).await?;
+    wait_for_members(&ta2.agent, &[id1, leaver_id], joined).await?;
+    wait_for_members(&leaver.agent, &[id1, id2], joined).await?;
+
+    let leaver_worker = tokio::spawn(leaver_worker);
+    leaver_tx.send(()).await.ok();
+
+    // A leaving node waits at most 5 seconds for its members to confirm
+    // that they hold it as down, so a runtime loop that ends within 2
+    // seconds heard from every member.
+    wait_for_swim_exit(&leaver.agent, Duration::from_secs(2)).await?;
 
     leaver_worker.await?;
     tripwire_tx.send(()).await.ok();

@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     net::SocketAddr,
-    num::{NonZeroU32, NonZeroUsize},
+    num::{NonZeroU32, NonZeroU8, NonZeroUsize},
     pin::Pin,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -12,7 +12,10 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use foca::{BincodeCodec, Foca, Identity, Member, NoCustomBroadcast, OwnedNotification, Timer};
+use foca::{
+    BincodeCodec, Codec, Foca, Identity, Member, Message, NoCustomBroadcast, OwnedNotification,
+    Timer,
+};
 use futures::{
     stream::{FusedStream, FuturesUnordered},
     Future,
@@ -338,22 +341,62 @@ pub fn runtime_loop(
                 }
             }
 
-            // leave the cluster gracefully
+            // Leave the cluster gracefully, and wait until every member
+            // that was active confirms that it holds this node as down.
+            // A member that holds this node as down answers any message
+            // from it with `TurnUndead`. So the loop gossips the down
+            // update to every member, again on each tick, and ends when
+            // every member has answered or the deadline passes. A member
+            // that missed the update receives it on the next tick.
+            //
+            // Foca gossips to `num_indirect_probes` members, and puts an
+            // update on at most `max_transmissions` messages. With the
+            // defaults, a member that no gossip reaches never hears the
+            // update from this node, so both settings grow to cover
+            // every member.
+            let mut unconfirmed: HashMap<ActorId, Actor> = foca
+                .iter_members()
+                .map(|member| (member.id().id(), member.id().clone()))
+                .collect();
+            let members = unconfirmed.len();
+
+            let mut leave_config = config.read().clone();
+            if let Some(members) = NonZeroUsize::new(members) {
+                leave_config.num_indirect_probes = members;
+            }
+            leave_config.max_transmissions = NonZeroU8::MAX;
+            if let Err(e) = foca.set_config(leave_config) {
+                error!("could not set foca config to leave: {e}");
+            }
+
             if let Err(e) = foca.leave_cluster(&mut runtime) {
                 error!("could not leave cluster: {e}");
             }
 
+            let mut codec: BincodeCodec<bincode::config::Configuration> =
+                BincodeCodec(bincode::config::Configuration::default());
+
             let leave_deadline = tokio::time::sleep(Duration::from_secs(5));
             tokio::pin!(leave_deadline);
+            let gossip_period = Duration::from_millis(250);
+            let mut gossip_interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + gossip_period,
+                gossip_period,
+            );
 
             let mut foca_done = false;
             let mut timer_done = false;
 
-            loop {
+            while !unconfirmed.is_empty() {
                 tokio::select! {
                     biased;
                     _ = &mut leave_deadline => {
                         break;
+                    },
+                    _ = gossip_interval.tick() => {
+                        if let Err(e) = foca.gossip(&mut runtime) {
+                            debug!("could not gossip leave: {e}");
+                        }
                     },
                     timer = timer_rx.recv(), if !timer_done => match timer {
                         Some((timer, seq)) => {
@@ -365,6 +408,13 @@ pub fn runtime_loop(
                     },
                     input = rx_foca.recv(), if !foca_done => match input {
                         Some(FocaInput::Data(data)) => {
+                            // Foca stops acting on messages once it has
+                            // left, so the loop reads the header itself.
+                            if let Ok(header) = Codec::<Actor>::decode_header(&mut codec, &data[..]) {
+                                if header.message == Message::TurnUndead {
+                                    unconfirmed.remove(&header.src.id());
+                                }
+                            }
                             _ = foca.handle_data(&data, &mut runtime);
                         },
                         None => {
@@ -379,6 +429,11 @@ pub fn runtime_loop(
                     }
                 }
             }
+
+            info!(
+                "left the cluster: {} of {members} members confirmed",
+                members - unconfirmed.len()
+            );
 
             if let Some(handle) =
                 diff_member_states(&agent, &foca, &mut last_states, &notifications_tx)

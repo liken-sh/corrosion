@@ -45,7 +45,7 @@ use spawn::spawn_counted;
 use tokio::time::{sleep, MissedTickBehavior};
 use tokio::{
     sync::mpsc::Receiver as TokioReceiver,
-    task::{block_in_place, JoinHandle},
+    task::{block_in_place, JoinHandle, JoinSet},
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
@@ -85,6 +85,11 @@ pub fn spawn_gossipserver_handler(
                 .with_timeout(Duration::from_secs(5));
             tokio::pin!(idle);
 
+            // The SWIM runtime loop leaves the cluster after the tripwire
+            // trips, and waits for each member to confirm with a SWIM
+            // datagram, so the server accepts connections until that loop
+            // ends. Stream handlers stop on the tripped wire, so a new
+            // connection carries only SWIM datagrams.
             loop {
                 tokio::select! {
                     _ = &mut idle => {
@@ -92,7 +97,11 @@ pub fn spawn_gossipserver_handler(
                     }
                     incoming = gossip_server_endpoint.accept() => {
                         if let Some(inc) = incoming {
-                            inc.refuse();
+                            if agent.tx_foca().is_closed() {
+                                inc.refuse();
+                            } else {
+                                spawn_incoming_connection_handlers(&agent, &bookie, &tripwire, inc);
+                            }
                         }
                     }
                 }
@@ -133,7 +142,7 @@ pub fn spawn_incoming_connection_handlers(
         trace!("accepted a QUIC conn from {remote_addr}");
 
         // Spawn handler tasks for this connection
-        spawn_foca_handler(&agent, &tripwire, &conn);
+        spawn_foca_handler(&agent, &conn);
         uni::spawn_unipayload_handler(&tripwire, &conn, agent.clone());
         bi::spawn_bipayload_handler(&agent, &bookie, &tripwire, &conn);
     });
@@ -206,10 +215,13 @@ pub fn spawn_rtt_handler(
 
 /// Spawn a single task to listen for `Datagram`s from the transport
 /// and apply FOCA messages to the local SWIM statemachine.
-pub fn spawn_foca_handler(agent: &Agent, tripwire: &Tripwire, conn: &quinn::Connection) {
+///
+/// The task reads until the connection closes or the SWIM runtime loop
+/// ends, not until the tripwire trips, because the runtime loop reads
+/// the members' confirmations of its leave after shutdown begins.
+pub fn spawn_foca_handler(agent: &Agent, conn: &quinn::Connection) {
     tokio::spawn({
         let conn = conn.clone();
-        let mut tripwire = tripwire.clone();
         let foca_tx = agent.tx_foca().clone();
         async move {
             loop {
@@ -225,14 +237,15 @@ pub fn spawn_foca_handler(agent: &Agent, tripwire: &Tripwire, conn: &quinn::Conn
                             return;
                         }
                     },
-                    _ = &mut tripwire => {
-                        debug!("connection cancelled");
+                    _ = foca_tx.closed() => {
+                        debug!("SWIM runtime loop has ended, connection cancelled");
                         return;
                     }
                 };
 
-                if let Err(e) = foca_tx.send(FocaInput::Data(b)).await {
-                    error!("could not send data foca input: {e}");
+                if foca_tx.send(FocaInput::Data(b)).await.is_err() {
+                    debug!("SWIM runtime loop has ended, connection cancelled");
+                    return;
                 }
             }
         }
@@ -310,7 +323,7 @@ pub async fn handle_gossip_to_send(
     transport: Transport,
     mut swim_to_send_rx: CorroReceiver<(Actor, Bytes)>,
 ) {
-    let spawn_sender_fn = |(actor, data): (Actor, Bytes)| {
+    let send_fn = |(actor, data): (Actor, Bytes)| {
         trace!("got gossip to send to {actor:?}");
 
         let addr = actor.addr();
@@ -319,27 +332,40 @@ pub async fn handle_gossip_to_send(
         let transport = transport.clone();
 
         let len = data.len();
-        spawn_counted(
-            async move {
-                if let Err(e) = transport.send_datagram(addr, data).await {
-                    error!("could not write datagram {addr}: {e}");
-                    return;
-                }
-                counter!("corro.peer.datagram.sent.total", "traffic" => "foca").increment(1);
-                counter!("corro.peer.datagram.bytes.sent.total", "traffic" => "foca")
-                    .increment(len as u64);
+        async move {
+            if let Err(e) = transport.send_datagram(addr, data).await {
+                error!("could not write datagram {addr}: {e}");
+                return;
             }
-            .instrument(debug_span!("send_swim_payload", %addr, %actor_id, buf_size = len)),
-        );
+            counter!("corro.peer.datagram.sent.total", "traffic" => "foca").increment(1);
+            counter!("corro.peer.datagram.bytes.sent.total", "traffic" => "foca")
+                .increment(len as u64);
+        }
+        .instrument(debug_span!("send_swim_payload", %addr, %actor_id, buf_size = len))
     };
 
     // The SWIM runtime loop announces that this node leaves the cluster
     // after shutdown begins, so this loop runs until the runtime loop
     // drops its sender, not until the tripwire trips. Otherwise the
     // leave never goes out and peers only find out after suspicion.
-    while let Some((actor, data)) = swim_to_send_rx.recv().await {
-        spawn_sender_fn((actor, data));
+    let mut sends = JoinSet::new();
+    loop {
+        tokio::select! {
+            msg = swim_to_send_rx.recv() => match msg {
+                Some(msg) => {
+                    sends.spawn(send_fn(msg));
+                }
+                None => break,
+            },
+            Some(_) = sends.join_next() => {}
+        }
     }
+
+    // A send to a member that is gone waits for the connect timeout, and
+    // the sends to one address connect one at a time. Once the runtime
+    // loop has ended, nothing reads a reply, so the sends that are still
+    // connecting would only hold shutdown open.
+    sends.shutdown().await;
 }
 
 /// Poll for updates from the cluster membership system (`foca`/ SWIM)
