@@ -113,6 +113,16 @@ pub fn bounded<T: Send + 'static>(
 }
 
 impl<T> CorroSender<T> {
+    /// Completes when the receiver is dropped.
+    pub async fn closed(&self) {
+        self.inner.closed().await
+    }
+
+    /// Returns true when the receiver is dropped.
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         let before = Instant::now();
         self.inner
