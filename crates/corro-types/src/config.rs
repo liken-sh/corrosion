@@ -351,6 +351,11 @@ pub struct GossipConfig {
     /// How long, in seconds, a member declared down stays remembered and announced to.
     #[serde(default = "default_gossip_remove_down_after")]
     pub remove_down_after_secs: u32,
+    /// Whether an agent loads the members it stored in `__corro_members`
+    /// when it starts. When false, it deletes them instead, and learns its
+    /// members from the bootstrap list alone.
+    #[serde(default = "default_gossip_restore_members")]
+    pub restore_members: bool,
     #[serde(default)]
     pub disable_gso: bool,
     #[serde(default)]
@@ -570,6 +575,10 @@ fn default_gossip_remove_down_after() -> u32 {
     DEFAULT_GOSSIP_REMOVE_DOWN_AFTER
 }
 
+fn default_gossip_restore_members() -> bool {
+    true
+}
+
 pub const DEFAULT_GOSSIP_CLIENT_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0u16, 0, 0));
 
@@ -693,6 +702,7 @@ pub struct ConfigBuilder {
     tls: Option<TlsConfig>,
     perf: Option<PerfConfig>,
     member_id: Option<MemberId>,
+    restore_members: Option<bool>,
     max_mtu: Option<u16>,
     disable_gso: bool,
     compression: Option<bool>,
@@ -768,6 +778,12 @@ impl ConfigBuilder {
 
     pub fn member_id(mut self, member_id: MemberId) -> Self {
         self.member_id = Some(member_id);
+        self
+    }
+
+    /// Set whether the agent loads the members it stored when it starts.
+    pub fn restore_members(mut self, restore: bool) -> Self {
+        self.restore_members = Some(restore);
         self
     }
 
@@ -851,6 +867,9 @@ impl ConfigBuilder {
                 tls: self.tls,
                 idle_timeout_secs: default_gossip_idle_timeout(),
                 remove_down_after_secs: default_gossip_remove_down_after(),
+                restore_members: self
+                    .restore_members
+                    .unwrap_or_else(default_gossip_restore_members),
                 max_mtu: self.max_mtu,
                 disable_gso: self.disable_gso,
                 member_id: self.member_id,

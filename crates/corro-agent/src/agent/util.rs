@@ -156,6 +156,20 @@ pub async fn initialise_foca(agent: &Agent, states: Vec<(SocketAddr, Member<Acto
 }
 
 /// Load the existing known member state, addresses, and persisted RTT samples.
+/// Delete the members stored by an earlier run, so that neither foca nor
+/// the bootstrap fallback reads a member that may no longer run. The
+/// agent stores its members again as it learns them.
+pub async fn clear_member_states(agent: &Agent) {
+    match agent.pool().write_priority().await {
+        Ok(conn) => {
+            if let Err(e) = block_in_place(|| conn.execute("DELETE FROM __corro_members", [])) {
+                error!("could not clear foca member states: {e}");
+            }
+        }
+        Err(e) => error!("could not acquire conn to clear foca member states: {e}"),
+    }
+}
+
 pub async fn load_member_states(agent: &Agent) -> Vec<(SocketAddr, Member<Actor>, Option<u64>)> {
     match agent.pool().read().await {
         Ok(conn) => block_in_place(|| {

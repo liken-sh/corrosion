@@ -87,7 +87,12 @@ async fn run(
     let (notifications_tx, notifications_rx) =
         bounded(pconf.notifications_channel_len, "notifications");
 
-    let loaded_member_states = util::load_member_states(&agent).await;
+    let loaded_member_states = if agent.config().gossip.restore_members {
+        util::load_member_states(&agent).await
+    } else {
+        util::clear_member_states(&agent).await;
+        vec![]
+    };
     let member_states: Vec<_> = loaded_member_states
         .iter()
         .map(|(address, member, _)| (*address, member.clone()))

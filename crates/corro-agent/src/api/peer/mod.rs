@@ -2510,6 +2510,7 @@ mod tests {
             }),
             idle_timeout_secs: 30,
             remove_down_after_secs: 2 * 24 * 3600,
+            restore_members: true,
             plaintext: false,
             max_mtu: None,
             disable_gso: false,

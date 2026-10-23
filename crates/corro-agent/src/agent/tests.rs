@@ -1658,6 +1658,70 @@ async fn test_leave_ends_when_every_member_confirms() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Starts an agent on a database whose member table lists a member that
+/// no longer runs, and returns the members the agent holds.
+async fn members_after_restart_with_dead_member(restore: bool) -> eyre::Result<Vec<ActorId>> {
+    let (first_tripwire, first_worker, first_tx) = Tripwire::new_simple();
+    let first = launch_test_agent(|conf| conf.build(), first_tripwire.clone()).await?;
+
+    let dead = corro_types::actor::Actor::new(
+        ActorId(Uuid::new_v4()),
+        "127.0.0.1:9".parse()?,
+        corro_types::broadcast::Timestamp::zero(),
+        corro_types::actor::ClusterId(0),
+        None,
+    );
+    let state = serde_json::to_string(&foca::Member::new(dead.clone(), 0, foca::State::Alive))?;
+    first.agent.pool().write_priority().await?.execute(
+        "INSERT INTO __corro_members (actor_id, address, foca_state, updated_at) VALUES (?, ?, ?, 0)",
+        rusqlite::params![dead.id(), dead.addr().to_string(), state],
+    )?;
+
+    let db_path = first.agent.db_path();
+    let first_worker = tokio::spawn(first_worker);
+    first_tx.send(()).await.ok();
+    first_worker.await?;
+    sleep(Duration::from_secs(1)).await;
+
+    let (tripwire, tripwire_worker, tripwire_tx) = Tripwire::new_simple();
+    let restarted = launch_test_agent(
+        |conf| conf.db_path(db_path).restore_members(restore).build(),
+        tripwire.clone(),
+    )
+    .await?;
+    sleep(Duration::from_secs(1)).await;
+    let members = restarted
+        .agent
+        .members()
+        .read()
+        .states
+        .keys()
+        .copied()
+        .collect();
+
+    tripwire_tx.send(()).await.ok();
+    tripwire_worker.await;
+    wait_for_all_pending_handles().await;
+    Ok(members)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_restored_members_include_a_dead_member() -> eyre::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+    assert_eq!(members_after_restart_with_dead_member(true).await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_unrestored_members_exclude_a_dead_member() -> eyre::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+    assert_eq!(
+        members_after_restart_with_dead_member(false).await?.len(),
+        0
+    );
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_execute_schema_from_paths() -> eyre::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
