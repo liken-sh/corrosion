@@ -50,6 +50,8 @@ This list is the whole state of the fork. Keep it current.
 | bb59e791 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 | c919321b | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
 | 2ed51b4c | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
+| b2c6b84d | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | pull request to open |
+| d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | pull request to open |
 
 The upstream column lists the pull request, or `liken only` for a
 change that stays here.
