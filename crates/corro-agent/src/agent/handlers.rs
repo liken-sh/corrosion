@@ -309,7 +309,6 @@ pub fn spawn_swim_announcer(agent: &Agent, gossip_addr: SocketAddr, tripwire: Tr
 pub async fn handle_gossip_to_send(
     transport: Transport,
     mut swim_to_send_rx: CorroReceiver<(Actor, Bytes)>,
-    mut tripwire: Tripwire,
 ) {
     let spawn_sender_fn = |(actor, data): (Actor, Bytes)| {
         trace!("got gossip to send to {actor:?}");
@@ -334,16 +333,12 @@ pub async fn handle_gossip_to_send(
         );
     };
 
-    while let Outcome::Completed(Some((actor, data))) =
-        swim_to_send_rx.recv().preemptible(&mut tripwire).await
-    {
+    // The SWIM runtime loop announces that this node leaves the cluster
+    // after shutdown begins, so this loop runs until the runtime loop
+    // drops its sender, not until the tripwire trips. Otherwise the
+    // leave never goes out and peers only find out after suspicion.
+    while let Some((actor, data)) = swim_to_send_rx.recv().await {
         spawn_sender_fn((actor, data));
-    }
-    if tripwire.is_shutting_down() {
-        // Send any remaining messages
-        while let Ok((actor, data)) = swim_to_send_rx.try_recv() {
-            spawn_sender_fn((actor, data));
-        }
     }
 }
 

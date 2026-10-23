@@ -171,7 +171,6 @@ async fn run(
     spawn_counted(handlers::handle_gossip_to_send(
         transport.clone(),
         to_send_rx,
-        tripwire.clone(),
     ));
     spawn_counted(handlers::handle_notifications(
         agent.clone(),

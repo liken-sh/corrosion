@@ -1516,6 +1516,80 @@ async fn test_diff_member_id() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Waits until `agent` lists exactly `expected` as its members.
+async fn wait_for_members(agent: &Agent, expected: &[ActorId], wait: Duration) -> eyre::Result<()> {
+    let mut expected = expected.to_vec();
+    expected.sort();
+    let deadline = Instant::now() + wait;
+    loop {
+        let mut members: Vec<ActorId> = agent.members().read().states.keys().copied().collect();
+        members.sort();
+        if members == expected {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            eyre::bail!(
+                "{} has members {members:?} after {wait:?}, want {expected:?}",
+                agent.actor_id()
+            );
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_leaving_member_is_down_before_suspicion() -> eyre::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+    let (tripwire, tripwire_worker, tripwire_tx) = Tripwire::new_simple();
+    let (leaver_tripwire, leaver_worker, leaver_tx) = Tripwire::new_simple();
+
+    let ta1 = launch_test_agent(|conf| conf.build(), tripwire.clone()).await?;
+    let ta2 = launch_test_agent(
+        |conf| {
+            conf.bootstrap(vec![ta1.agent.gossip_addr().to_string()])
+                .build()
+        },
+        tripwire.clone(),
+    )
+    .await?;
+    let leaver = launch_test_agent(
+        |conf| {
+            conf.bootstrap(vec![ta1.agent.gossip_addr().to_string()])
+                .build()
+        },
+        leaver_tripwire.clone(),
+    )
+    .await?;
+
+    let (id1, id2, leaver_id) = (
+        ta1.agent.actor_id(),
+        ta2.agent.actor_id(),
+        leaver.agent.actor_id(),
+    );
+    let joined = Duration::from_secs(10);
+    wait_for_members(&ta1.agent, &[id2, leaver_id], joined).await?;
+    wait_for_members(&ta2.agent, &[id1, leaver_id], joined).await?;
+    wait_for_members(&leaver.agent, &[id1, id2], joined).await?;
+
+    // The worker trips the wire, so it runs while the peers are checked.
+    let leaver_worker = tokio::spawn(leaver_worker);
+    leaver_tx.send(()).await.ok();
+
+    // SWIM declares a silent member down only after at least 30 seconds
+    // of suspicion, so a member that is down within 5 seconds told its
+    // peers that it left.
+    let left = Duration::from_secs(5);
+    wait_for_members(&ta1.agent, &[id2], left).await?;
+    wait_for_members(&ta2.agent, &[id1], left).await?;
+
+    leaver_worker.await?;
+    tripwire_tx.send(()).await.ok();
+    tripwire_worker.await;
+    wait_for_all_pending_handles().await;
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_execute_schema_from_paths() -> eyre::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
