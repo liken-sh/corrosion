@@ -54,6 +54,7 @@ This list is the whole state of the fork. Keep it current.
 | 2ed51b4c | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
 | b2c6b84d | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | not sent |
 | d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | not sent |
+| b8f71e33 | adds `gossip.restore_members`; when false, an agent deletes the members it stored instead of loading them at start, so a short-lived agent does not revive members that are gone | liken only |
 
 The upstream column lists the pull request, `liken only` for a
 change that serves only liken's use, or `not sent` for a universal
