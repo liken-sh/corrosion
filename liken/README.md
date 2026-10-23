@@ -44,12 +44,12 @@ This list is the whole state of the fork. Keep it current.
 | commit | change | upstream |
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
-| 7c5ed05 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
-| 3135bb2 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
-| dc91cd01 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
-| fc2a368f | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
-| a42542eb | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
-| 3308fccb | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
+| bc71014 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
+| ae779ab | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
+| 2e0a9155 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
+| bb59e791 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
+| c919321b | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
+| 2ed51b4c | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
 
 The upstream column lists the pull request, or `liken only` for a
 change that stays here.
