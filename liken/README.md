@@ -7,15 +7,17 @@ exists for two reasons:
 
 1. To publish an image, `ghcr.io/liken-sh/corrosion`, that the
    operators build on. Upstream publishes binaries, not an image.
-2. To run a small stack of changes in a cluster before upstream
-   merges them.
+2. To carry a small stack of performance, stability, and
+   reliability fixes that liken's clusters need, whether or not
+   upstream merges them.
 
 It is a shallow fork, and it stays faithful to upstream. It includes
 no feature or usability changes, and it never rearranges upstream's
-code. Each change on the stack is one small, self-contained
-performance commit. A change that anyone who runs Corrosion would
-want goes upstream as a pull request; a change that serves only
-liken's use stays on the stack. `AGENTS.md` states these rules.
+code. Each change on the stack is one small, self-contained commit
+that makes Corrosion faster or more reliable. A change that anyone
+who runs Corrosion would want can go upstream as a pull request, but
+the stack does not wait for upstream to merge it. `AGENTS.md` states
+these rules.
 
 ## The branches
 
@@ -30,9 +32,9 @@ commits, in this order:
 
 1. The bottom commits add the fork's own files and nothing else:
    this directory, `AGENTS.md`, and `.github/workflows/liken.yaml`.
-2. Each commit above them is one change to Corrosion. A universal
-   change has a pull request against upstream, and the commit
-   message names it. A liken-only change says so in its message.
+2. Each commit above them is one change to Corrosion. A change with
+   a pull request against upstream names it in its commit message. A
+   liken-only change says so in its message.
 
 Upstream's files are never edited on the bottom commits, so those
 commits never conflict with a sync.
@@ -50,11 +52,12 @@ This list is the whole state of the fork. Keep it current.
 | bb59e791 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
 | c919321b | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
 | 2ed51b4c | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory; cargo-platform stays at 0.3.2 for the 1.89 toolchain | liken only |
-| b2c6b84d | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | pull request to open |
-| d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | pull request to open |
+| b2c6b84d | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | not sent |
+| d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | not sent |
 
-The upstream column lists the pull request, or `liken only` for a
-change that stays here.
+The upstream column lists the pull request, `liken only` for a
+change that serves only liken's use, or `not sent` for a universal
+change with no pull request.
 
 ## Adding a change
 
@@ -65,7 +68,8 @@ pull request contains no commits from this fork:
     # make the change, run the tests
     git push origin <slug>
 
-If the change is universal, open the pull request from that branch:
+If the change is universal, you can open a pull request from that
+branch:
 
     gh pr create --repo superfly/corrosion --base main --head liken-sh:<slug>
 

@@ -10,30 +10,32 @@ process that names one.
 
 ## What the fork is for
 
-The fork exists to control the image build and to keep performance
-improvements. Do not make feature or usability changes here. A change
-that is not about the build or about performance does not belong on the
+The fork exists to control the image build and to keep performance,
+stability, and reliability fixes that `liken`'s clusters need. Do not
+make feature or usability changes here. A change that is not about the
+build, performance, stability, or reliability does not belong on the
 stack.
 
 Stay faithful to upstream. Do not move, rename, or restructure
 upstream's code. Every commit on the stack must rebase cleanly onto the
 next upstream main, and a rearranged tree does not.
 
-Land each performance change as one small commit that a maintainer could
-read and merge on its own. Keep a change inside one crate, and do not mix
+Land each change as one small commit that a maintainer could read and
+merge on its own. Touch as few crates as the change needs, and do not mix
 a cleanup into it.
 
-Send a change upstream only when it helps anyone who runs Corrosion, not
-only `liken`. A change that serves `liken`'s sidecar shape alone stays on
-the stack as a `liken`-only commit.
+A change that helps anyone who runs Corrosion can go upstream as a pull
+request, but the stack does not wait for upstream to merge it. A change
+that serves `liken`'s sidecar shape alone stays on the stack as a
+`liken`-only commit and never goes upstream.
 
 ## The rules
 
 - `main` mirrors upstream. Never commit to it.
-- A change to Corrosion starts as a branch from `main`. If it helps
-  everyone, open a pull request to superfly/corrosion from that branch.
-  Either way it joins the `liken` stack by cherry-pick, and its row in
-  the README's stack table records which.
+- A change to Corrosion starts as a branch from `main`, so a pull
+  request to superfly/corrosion can come from that branch later. It
+  joins the `liken` stack by cherry-pick, and its row in the README's
+  stack table records whether it has a pull request.
 - The bottom commits of the stack are the only commits that touch
   fork-only files, and they touch none of upstream's. Do not edit
   upstream's README, workflows, or Cargo profiles there.
@@ -50,6 +52,6 @@ follows `liken`'s writing rules: active voice, simple tenses, one topic
 per sentence, one meaning per word. A comment says what the code does now
 and why, not how it got there. A commit message is one line on what
 changed, a blank line, then a short paragraph on why, with a link to the
-upstream pull request.
+upstream pull request when there is one.
 
 Code that goes upstream follows upstream's conventions, not these.
