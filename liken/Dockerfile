@@ -13,7 +13,7 @@
 # recipe changes only when a manifest or the lock file changes, so a
 # commit to the workspace's own crates reuses the dependency layer
 # from the registry cache and compiles only those crates.
-FROM rust:1.98.1-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS chef
+FROM rust:1.99.1-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137 AS chef
 
 # The builder runs on the same Debian release as the runtime below,
 # because the binary links against the builder's glibc and a newer
@@ -26,7 +26,7 @@ FROM rust:1.98.1-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872
 # would install that channel at build time. RUSTUP_TOOLCHAIN overrides
 # the file, so the build uses the base's toolchain and installs none,
 # and the file remains as upstream wrote it.
-ENV RUSTUP_TOOLCHAIN=1.98.1
+ENV RUSTUP_TOOLCHAIN=1.99.1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang mold \
     && rm -rf /var/lib/apt/lists/*
