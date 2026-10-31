@@ -13,12 +13,20 @@
 # recipe changes only when a manifest or the lock file changes, so a
 # commit to the workspace's own crates reuses the dependency layer
 # from the registry cache and compiles only those crates.
-FROM rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff AS chef
+FROM rust:1.98.1-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS chef
 
-# The base includes the toolchain rust-toolchain.toml names, so no
-# toolchain installs at build time, and it includes the C toolchain.
-# .cargo/config.toml links with clang and mold, so those two packages
-# are the whole of what the build adds.
+# The builder runs on the same Debian release as the runtime below,
+# because the binary links against the builder's glibc and a newer
+# glibc than the runtime's fails to load. The base includes the C
+# toolchain. .cargo/config.toml links with clang and mold, so those
+# two packages are the whole of what the build adds.
+#
+# The base's Rust is the version that liken's own crates build with.
+# Upstream's rust-toolchain.toml names an older channel, and rustup
+# would install that channel at build time. RUSTUP_TOOLCHAIN overrides
+# the file, so the build uses the base's toolchain and installs none,
+# and the file remains as upstream wrote it.
+ENV RUSTUP_TOOLCHAIN=1.98.1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang mold \
     && rm -rf /var/lib/apt/lists/*
@@ -37,7 +45,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 
-# The linker settings and the toolchain pin come before the cook, so
+# The linker settings and the toolchain file come before the cook, so
 # the dependencies compile with the flags the final build uses. A
 # dependency built with other flags would compile a second time.
 COPY .cargo .cargo
@@ -61,7 +69,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 # because the binary contains a prebuilt cr-sqlite shared object and
 # loads it at run time, and that object links against
 # glibc and libgcc. A static musl binary could not load it.
-FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
+FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
 
 COPY --from=build /usr/src/corrosion/target/release/corrosion /corrosion
 
