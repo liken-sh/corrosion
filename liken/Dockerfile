@@ -37,6 +37,37 @@ RUN apt-get update \
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     cargo install cargo-chef --locked --version 0.1.78
 
+# A Rust binary holds no record of the crates it was compiled from, so
+# syft and Trivy list none of them from the image, and a scan matches
+# no advisory against them. `cargo auditable build` records the crate
+# graph of the build, compressed, in the binary's `.dep-v0` section,
+# and syft and Trivy read that section. The build below runs it.
+#
+# The pin is the version and the digest of the upstream project's
+# prebuilt archive for x86_64-unknown-linux-gnu, the target of the
+# base above. The version follows the pin in the liken repository,
+# toolchains/cargo-auditable/fetch.sh, and this digest is the one that
+# file commits for the same version. The download goes to a .partial
+# file that takes the archive's name in the cache mount only after its
+# digest matches, so a torn or changed download never takes the name
+# of a good one. A cached archive that does not match is downloaded
+# again.
+RUN --mount=type=cache,target=/var/cache/cargo-auditable <<'EOF'
+set -eu
+version=0.7.7
+sha256=4c8d3b08c3c34e9f2333367224dbbfb4aab68067698b43de59fe19aded3416dd
+asset=cargo-auditable-x86_64-unknown-linux-gnu
+archive="/var/cache/cargo-auditable/$version/$asset.tar.xz"
+if ! echo "$sha256  $archive" | sha256sum --check --status 2>/dev/null; then
+    mkdir -p "$(dirname "$archive")"
+    curl --fail --silent --show-error --location --output "$archive.partial" \
+        "https://github.com/rust-secure-code/cargo-auditable/releases/download/v$version/$asset.tar.xz"
+    echo "$sha256  $archive.partial" | sha256sum --check --quiet
+    mv "$archive.partial" "$archive"
+fi
+tar -xJf "$archive" -C /usr/local/cargo/bin --strip-components=1 "$asset/cargo-auditable"
+EOF
+
 WORKDIR /usr/src/corrosion
 
 FROM chef AS planner
@@ -59,9 +90,12 @@ COPY --from=planner /usr/src/corrosion/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     CARGO_PROFILE_RELEASE_STRIP=true cargo chef cook --release --locked --bin corrosion --recipe-path recipe.json
 
+# `cargo auditable` wraps rustc only for the workspace's own crates,
+# so the dependencies that the cook compiled with plain cargo keep
+# their fingerprints and do not compile again here.
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
-    CARGO_PROFILE_RELEASE_STRIP=true cargo build --release --locked --bin corrosion
+    CARGO_PROFILE_RELEASE_STRIP=true cargo auditable build --release --locked --bin corrosion
 
 # The runtime is distroless: a libc, libgcc, and nothing else, no
 # shell and no tools, because an agent stores a replicated database
