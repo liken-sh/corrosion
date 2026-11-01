@@ -115,6 +115,22 @@ calendar scheme, `2026.09.09-001`, and the workflow builds
 commands. `make -C liken image` builds the same image on a
 workstation as `ghcr.io/liken-sh/corrosion:local`.
 
+Each pushed image carries an SBOM and the build's provenance as
+attestations in its index, and cosign signs the index digest keyless
+as the `liken` workflow. The binary is built with `cargo auditable`,
+so the SBOM lists every crate compiled into it. Verify the signature
+and read the attestations of a digest with:
+
+    image=ghcr.io/liken-sh/corrosion
+    cosign verify "$image@$digest" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github\.com/liken-sh/corrosion/\.github/workflows/liken\.yaml@refs/(heads/liken|tags/[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{3})$'
+    docker buildx imagetools inspect "$image@$digest" --format '{{ json .SBOM }}'
+    docker buildx imagetools inspect "$image@$digest" --format '{{ json .Provenance }}'
+
+The identity accepts only a run on the `liken` branch or at a
+release tag, because the workflow pushes from no other ref.
+
 ## The build
 
 `liken/Dockerfile` builds in three stages with cargo-chef, so the

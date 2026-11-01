@@ -24,22 +24,43 @@ on:
     branches: [liken]
     tags: ["**"]
 
-permissions:
-  contents: read
-  packages: write
+# The workflow grants nothing by default. The one job below names the
+# permissions it needs.
+permissions: {}
 
 # One release at a time. Two runs that pushed :latest at once would
 # leave whichever finished second, which is not always the newer one.
 concurrency:
   group: liken
 
+# Each action is pinned by the commit of a release, and the comment
+# names that release. A tag can move to another commit, and a commit
+# cannot, so the pin is what the review of the commit that set it saw.
+#
+# The two images that the job runs are pinned by digest, at the same
+# versions and digests as the pins in the liken repository's
+# toolchains/images.toml. Follow those pins. buildx runs the syft
+# scanner to write the SBOM. Without a pin, buildx pulls its default
+# scanner by a moving tag, and the program that writes the SBOM would
+# change with no change to this tree. cosign signs the pushed image.
+env:
+  SYFT_SCANNER: docker/buildkit-syft-scanner:1.12.1@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315
+  COSIGN: ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
+
 jobs:
   release:
     runs-on: ubuntu-26.04
+    # packages: write pushes the image and its signature. id-token:
+    # write lets the job ask GitHub for the OIDC token that cosign
+    # signs with, so only this job can sign as this workflow.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
       # The checkout fetches the whole history, because git describe
       # below needs the tags.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -74,9 +95,9 @@ jobs:
             echo "VERSION=$(printf '%s-dev-%03d-%s' "$release" "$count" "${GITHUB_SHA:0:8}")" >> "$GITHUB_ENV"
           fi
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -86,17 +107,18 @@ jobs:
       # image, so a tag's release of a commit whose development build
       # already ran here rebuilds nothing. The context is the whole
       # checkout, because the Dockerfile compiles the tree it sits in.
+      # This build loads the image into Docker for the proof below, and
+      # Docker's image store keeps no attestations, so the push is a
+      # second build.
       - name: Build the image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: liken/Dockerfile
           load: true
           cache-from: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache
           cache-to: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache,mode=max
-          tags: |
-            ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
-            ghcr.io/liken-sh/corrosion:latest
+          tags: ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
 
       # The runner has no peers, so nothing here replicates. What can
       # break invisibly is the dynamic closure, so the binary proves
@@ -104,12 +126,50 @@ jobs:
       - name: Prove the image
         run: docker run --rm "ghcr.io/liken-sh/corrosion:$VERSION" --version
 
+      # The push builds again on the same builder, so every layer comes
+      # from the build above and nothing compiles. buildx attaches two
+      # attestations to the image: an SBOM, which the pinned syft
+      # scanner writes from the crates that `cargo auditable` recorded
+      # in the binary and from the base's packages, and the build's
+      # provenance in max mode, which records the Dockerfile, the
+      # context's commit, and the digest of each base image. buildx
+      # stores both in the image's index, so the index digest covers
+      # them.
+      #
       # A release moves :latest. A development build pushes only its
       # own version, so :latest always names a release.
       - name: Push the image
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: liken/Dockerfile
+          push: true
+          sbom: generator=${{ env.SYFT_SCANNER }}
+          provenance: mode=max
+          cache-from: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache
+          tags: |
+            ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
+            ${{ github.ref_type == 'tag' && 'ghcr.io/liken-sh/corrosion:latest' || '' }}
+
+      # cosign signs keyless: it takes the job's OIDC token from the
+      # two ACTIONS_ID_TOKEN_REQUEST variables, Fulcio certifies this
+      # workflow as the signer, and Rekor records the signature. cosign
+      # pushes the signature to the image's repository with the
+      # credential that docker/login-action wrote to ~/.docker. The
+      # container runs as the runner's user, so it can read that
+      # configuration, and HOME is a writable directory for the
+      # sigstore trust root that cosign fetches.
+      #
+      # The signature names the digest that the push wrote, not a tag,
+      # because a tag can move. That digest names the index, so one
+      # signature covers the image, the SBOM, and the provenance.
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          docker push "ghcr.io/liken-sh/corrosion:$VERSION"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            docker push ghcr.io/liken-sh/corrosion:latest
-          fi
-          echo "ghcr.io/liken-sh/corrosion:$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -e ACTIONS_ID_TOKEN_REQUEST_URL -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+            -e DOCKER_CONFIG=/docker -v "$HOME/.docker:/docker:ro" \
+            "$COSIGN" sign --yes "ghcr.io/liken-sh/corrosion@$DIGEST"
+          echo "ghcr.io/liken-sh/corrosion:$VERSION@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
