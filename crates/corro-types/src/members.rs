@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use circular_buffer::CircularBuffer;
+use circular_buffer::FixedCircularBuffer;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
 
@@ -104,7 +104,7 @@ fn ring_with_hysteresis(current: Option<u8>, rtt_ms: u64) -> u8 {
 
 #[derive(Debug, Default, Clone)]
 pub struct Rtt {
-    pub buf: CircularBuffer<RTT_WINDOW, u64>,
+    pub buf: FixedCircularBuffer<u64, RTT_WINDOW>,
 }
 
 impl Rtt {
