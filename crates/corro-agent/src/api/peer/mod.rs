@@ -1454,7 +1454,9 @@ pub async fn serve_sync(
 
     let context =
         opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(&trace_ctx));
-    tracing::Span::current().set_parent(context);
+    // This fails when no OpenTelemetry layer is installed, and the sync
+    // runs the same with or without a parent span.
+    let _ = tracing::Span::current().set_parent(context);
 
     debug!(actor_id = %their_actor_id, self_actor_id = %agent.actor_id(), "received sync request");
     let mut codec = LengthDelimitedCodec::builder()
@@ -2460,17 +2462,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_mutual_tls() -> eyre::Result<()> {
-        let ca_cert = generate_ca()?;
-        let (server_cert, server_cert_signed) = generate_server_cert(
-            &ca_cert.serialize_pem()?,
-            &ca_cert.serialize_private_key_pem(),
+        let ca = generate_ca()?;
+        let server_cert = generate_server_cert(
+            &ca.cert.pem(),
+            &ca.signing_key.serialize_pem(),
             "127.0.0.1".parse()?,
         )?;
 
-        let (client_cert, client_cert_signed) = generate_client_cert(
-            &ca_cert.serialize_pem()?,
-            &ca_cert.serialize_private_key_pem(),
-        )?;
+        let client_cert = generate_client_cert(&ca.cert.pem(), &ca.signing_key.serialize_pem())?;
 
         let tmpdir = TempDir::new()?;
         let base_path = Utf8PathBuf::from(tmpdir.path().display().to_string());
@@ -2482,13 +2481,13 @@ mod tests {
         let client_cert_file = base_path.join("client-cert.pem");
         let client_key_file = base_path.join("client-cert.key");
 
-        tokio::fs::write(&cert_file, &server_cert_signed).await?;
-        tokio::fs::write(&key_file, server_cert.serialize_private_key_pem()).await?;
+        tokio::fs::write(&cert_file, server_cert.cert.pem()).await?;
+        tokio::fs::write(&key_file, server_cert.signing_key.serialize_pem()).await?;
 
-        tokio::fs::write(&ca_file, ca_cert.serialize_pem()?).await?;
+        tokio::fs::write(&ca_file, ca.cert.pem()).await?;
 
-        tokio::fs::write(&client_cert_file, &client_cert_signed).await?;
-        tokio::fs::write(&client_key_file, client_cert.serialize_private_key_pem()).await?;
+        tokio::fs::write(&client_cert_file, client_cert.cert.pem()).await?;
+        tokio::fs::write(&client_key_file, client_cert.signing_key.serialize_pem()).await?;
 
         let gossip_config = GossipConfig {
             bind_addr: "127.0.0.1:0".parse()?,
@@ -2554,10 +2553,7 @@ mod tests {
             .downcast::<Vec<rustls::pki_types::CertificateDer<'_>>>()
             .unwrap();
 
-        assert_eq!(
-            client_conn_peer_id[0],
-            rustls::pki_types::CertificateDer::from_pem_slice(server_cert_signed.as_bytes())?,
-        );
+        assert_eq!(client_conn_peer_id[0], *server_cert.cert.der());
 
         let server_conn = res.1;
 
@@ -2567,10 +2563,7 @@ mod tests {
             .downcast::<Vec<rustls::pki_types::CertificateDer<'_>>>()
             .unwrap();
 
-        assert_eq!(
-            server_conn_peer_id[0],
-            rustls::pki_types::CertificateDer::from_pem_slice(client_cert_signed.as_bytes())?,
-        );
+        assert_eq!(server_conn_peer_id[0], *client_cert.cert.der());
 
         Ok(())
     }
