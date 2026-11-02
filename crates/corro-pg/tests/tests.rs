@@ -10,7 +10,7 @@ use corro_types::{
 };
 use pgwire::types::{format::FormatOptions, ToSqlText};
 use postgres_types::{Format, IsNull, ToSql, Type};
-use rcgen::Certificate;
+use rcgen::{CertifiedKey, KeyPair};
 use rustls::pki_types::pem::PemObject;
 use spawn::wait_for_all_pending_handles;
 use tempfile::TempDir;
@@ -1174,7 +1174,7 @@ async fn test_pg_corrrosion_shutdown() {
 }
 
 struct TestCertificates {
-    ca_cert: Certificate,
+    ca: CertifiedKey<KeyPair>,
     client_cert_signed: String,
     client_key: Vec<u8>,
     ca_file: Utf8PathBuf,
@@ -1183,18 +1183,18 @@ struct TestCertificates {
 }
 
 async fn generate_and_write_certs(tmpdir: &TempDir) -> TestCertificates {
-    let ca_cert = generate_ca().expect("failed to generate CA");
-    let ca_pem = &ca_cert.serialize_pem().expect("failed to serialize CA");
-    let (server_cert, server_cert_signed) = generate_server_cert(
+    let ca = generate_ca().expect("failed to generate CA");
+    let ca_pem = &ca.cert.pem();
+    let server = generate_server_cert(
         ca_pem,
-        &ca_cert.serialize_private_key_pem(),
+        &ca.signing_key.serialize_pem(),
         std::net::Ipv4Addr::LOCALHOST.into(),
     )
     .expect("failed to generate server cert");
 
-    let (client_cert, client_cert_signed) =
-        generate_client_cert(ca_pem, &ca_cert.serialize_private_key_pem())
-            .expect("failed to generate client cert");
+    let client = generate_client_cert(ca_pem, &ca.signing_key.serialize_pem())
+        .expect("failed to generate client cert");
+    let client_cert_signed = client.cert.pem();
 
     let base_path = Utf8PathBuf::from(tmpdir.path().display().to_string());
 
@@ -1205,33 +1205,30 @@ async fn generate_and_write_certs(tmpdir: &TempDir) -> TestCertificates {
     let client_cert_file = base_path.join("client-cert.pem");
     let client_key_file = base_path.join("client-cert.key");
 
-    tokio::fs::write(&cert_file, &server_cert_signed)
+    tokio::fs::write(&cert_file, server.cert.pem())
         .await
         .expect("failed to write server cert");
-    tokio::fs::write(&key_file, server_cert.serialize_private_key_pem())
+    tokio::fs::write(&key_file, server.signing_key.serialize_pem())
         .await
         .expect("failed to write server key");
 
-    tokio::fs::write(
-        &ca_file,
-        ca_cert.serialize_pem().expect("failed to serialize CA"),
-    )
-    .await
-    .expect("failed to write CA");
+    tokio::fs::write(&ca_file, ca.cert.pem())
+        .await
+        .expect("failed to write CA");
 
     tokio::fs::write(&client_cert_file, &client_cert_signed)
         .await
         .expect("failed to write client cert");
-    tokio::fs::write(&client_key_file, client_cert.serialize_private_key_pem())
+    tokio::fs::write(&client_key_file, client.signing_key.serialize_pem())
         .await
         .expect("failed to write client key");
 
     TestCertificates {
         server_cert_file: cert_file,
         server_key_file: key_file,
-        ca_cert,
+        ca,
         client_cert_signed,
-        client_key: client_cert.serialize_private_key_der(),
+        client_key: client.signing_key.serialize_der(),
         ca_file,
     }
 }
@@ -1264,11 +1261,7 @@ async fn test_pg_ssl() {
 
     {
         let mut root_cert_store = tokio_rustls::rustls::RootCertStore::empty();
-        root_cert_store
-            .add(rustls::pki_types::CertificateDer::from_slice(
-                &certs.ca_cert.serialize_der().unwrap(),
-            ))
-            .unwrap();
+        root_cert_store.add(certs.ca.cert.der().clone()).unwrap();
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(root_cert_store)
             .with_no_client_auth();
@@ -1328,12 +1321,7 @@ async fn test_pg_mtls() {
     {
         let mut root_cert_store = tokio_rustls::rustls::RootCertStore::empty();
         root_cert_store
-            .add(rustls::pki_types::CertificateDer::from_slice(
-                &certs
-                    .ca_cert
-                    .serialize_der()
-                    .expect("failed to serialize cert to DER"),
-            ))
+            .add(certs.ca.cert.der().clone())
             .expect("failed to add root cert");
 
         let client_cert =
