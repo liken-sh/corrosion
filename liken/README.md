@@ -56,6 +56,7 @@ This list is the whole state of the fork. Keep it current.
 | d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | not sent |
 | b8f71e33 | adds `gossip.restore_members`; when false, an agent deletes the members it stored instead of loading them at start, so a short-lived agent does not revive members that are gone | liken only |
 | 3e02630d | cargo-platform moves to 0.3.3 in the lockfile, which needs Rust 1.91; the image builds with Rust 1.99.1 | liken only |
+| dd6beaf1 | rustls, thin-vec, time, and rand move to patched releases in the lockfile; serde_with moves to 3.24, opentelemetry to 0.33 with tracing-opentelemetry 0.34, and rcgen to 0.14, which removes ring 0.16; the certificate generators port to the rcgen 0.14 API | liken only |
 
 The upstream column lists the pull request, `liken only` for a
 change that serves only liken's use, or `not sent` for a universal
