@@ -519,7 +519,7 @@ dependencies = [
  "rustc_version",
  "serde_json",
  "z85",
- "zstd 0.14.3",
+ "zstd",
 ]
 
 [[package]]
@@ -551,7 +551,7 @@ dependencies = [
  "serde_json",
  "syn 3.0.9",
  "z85",
- "zstd 0.14.3",
+ "zstd",
 ]
 
 [[package]]
@@ -698,9 +698,9 @@ dependencies = [
 
 [[package]]
 name = "circular-buffer"
-version = "0.1.9"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67261db007b5f4cf8cba393c1a5c511a5cc072339ce16e12aeba1d7b9b77946"
+checksum = "662f6b21c6e889ee4e3f449e197c40f03603472fcd40c709093d386e3dca07cf"
 
 [[package]]
 name = "clap"
@@ -996,7 +996,7 @@ dependencies = [
  "tripwire",
  "uhlc",
  "uuid",
- "zstd 0.13.4",
+ "zstd",
 ]
 
 [[package]]
@@ -1217,7 +1217,7 @@ dependencies = [
  "tripwire",
  "uhlc",
  "uuid",
- "zstd 0.13.4",
+ "zstd",
 ]
 
 [[package]]
@@ -6813,29 +6813,11 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zstd"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdb02c3132d251ab1606e9fc913a7da6c6ed08cc263df15edf082e1dc497d157"
-dependencies = [
- "zstd-safe 7.4.0",
-]
-
-[[package]]
-name = "zstd"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
 dependencies = [
- "zstd-safe 8.2.0",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "7.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c8ea04668f5de8d8d51051714ba560c9536519cadcdb8829bba4fe2ad159b03"
-dependencies = [
- "zstd-sys",
+ "zstd-safe",
 ]
 
 [[package]]
