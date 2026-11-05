@@ -6,6 +6,11 @@ on:
       - main
 
 name: CI
+
+# Read-only by default; book-test grants itself what it needs.
+permissions:
+  contents: read
+
 env:
   RUSTFLAGS: --cfg tokio_unstable
   CARGO_TERM_COLOR: always
