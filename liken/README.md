@@ -107,16 +107,23 @@ images by digest, so a rewrite moves nothing that runs.
 
 A pushed tag is a release. The tag names a version in liken's
 calendar scheme, `2026.09.09-001`, and the workflow builds
-`liken/Dockerfile` and pushes the image under that tag and
-`:latest`. A push to `liken` builds a development image,
+`liken/Dockerfile` through `docker-bake.hcl` and pushes the image
+under that tag and `:latest`. A push to `liken` builds a development image,
 `2026.09.09-001-dev-002-abcdef01`, and pushes only that version.
 
     git tag 2026.09.09-001
     git push origin 2026.09.09-001
 
 `make -C liken release` picks today's next serial and runs those two
-commands. `make -C liken image` builds the same image on a
-workstation as `ghcr.io/liken-sh/corrosion:local`.
+commands. `make -C liken image` runs `docker buildx bake --load
+corrosion` at the top of the repository, which builds the same image
+on a workstation as `ghcr.io/liken-sh/corrosion:local`.
+
+`docker-bake.hcl` holds the image's tags, platform, cache, and
+attestations, and its OCI labels: `title`, `description`,
+`documentation`, `url`, `licenses`, `vendor`, and, in CI, `source`,
+`revision`, `version`, and `created`. The Dockerfile sets no label, so
+a change to a label never invalidates a layer.
 
 Each pushed image carries an SBOM and the build's provenance as
 attestations in its index, and cosign signs the index digest keyless
