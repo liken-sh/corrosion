@@ -13,11 +13,11 @@ sync:
 	git rebase main liken
 	git push --force-with-lease origin liken
 
-# The image, built the way the workflow builds it, tagged for a
-# workstation. The context is the repository, because the Dockerfile
-# compiles the tree in that context.
+# The image, built from the same bake target that the workflow builds,
+# for this machine's platform and tagged :local. The bake file is at
+# the repository's root, which is also the build context.
 image:
-	docker build --file $(CURDIR)/Dockerfile --tag ghcr.io/liken-sh/corrosion:local $(CURDIR)/..
+	cd $(CURDIR)/.. && docker buildx bake --load corrosion
 
 # Tag today's next serial and push it, which is the release. The
 # serial counts the tags that already carry today's date, so two

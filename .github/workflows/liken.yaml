@@ -37,14 +37,11 @@ concurrency:
 # names that release. A tag can move to another commit, and a commit
 # cannot, so the pin is what the review of the commit that set it saw.
 #
-# The two images that the job runs are pinned by digest, at the same
-# versions and digests as the pins in the liken repository's
-# toolchains/images.toml. Follow those pins. buildx runs the syft
-# scanner to write the SBOM. Without a pin, buildx pulls its default
-# scanner by a moving tag, and the program that writes the SBOM would
-# change with no change to this tree. cosign signs the pushed image.
+# cosign's image is pinned by digest, at the same version and digest
+# as the pin in the liken repository's toolchains/images.toml. Follow
+# that pin. cosign signs the pushed image. The syft scanner that
+# writes the SBOM is pinned the same way in docker-bake.hcl.
 env:
-  SYFT_SCANNER: docker/buildkit-syft-scanner:1.12.1@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315
   COSIGN: ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d
 
 jobs:
@@ -103,22 +100,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The build reads and writes the :buildcache tag beside the
-      # image, so a tag's release of a commit whose development build
-      # already ran here rebuilds nothing. The context is the whole
-      # checkout, because the Dockerfile compiles the tree it sits in.
-      # This build loads the image into Docker for the proof below, and
-      # Docker's image store keeps no attestations, so the push is a
-      # second build.
+      # The image's build is the `corrosion` target of docker-bake.hcl,
+      # the same target that `make -C liken image` builds on a
+      # workstation. It reads the :buildcache tag beside the image, so
+      # a tag's release of a commit whose development build already ran
+      # here rebuilds nothing. This build loads the image into Docker
+      # for the proof below, and Docker's image store keeps no
+      # attestations, so the push is a second build.
       - name: Build the image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: liken/Dockerfile
-          load: true
-          cache-from: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache
-          cache-to: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache,mode=max
-          tags: ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
+        run: docker buildx bake --load corrosion
 
       # The runner has no peers, so nothing here replicates. What can
       # break invisibly is the dynamic closure, so the binary proves
@@ -127,30 +117,37 @@ jobs:
         run: docker run --rm "ghcr.io/liken-sh/corrosion:$VERSION" --version
 
       # The push builds again on the same builder, so every layer comes
-      # from the build above and nothing compiles. buildx attaches two
-      # attestations to the image: an SBOM, which the pinned syft
-      # scanner writes from the crates that `cargo auditable` recorded
-      # in the binary and from the base's packages, and the build's
-      # provenance in max mode, which records the Dockerfile, the
-      # context's commit, and the digest of each base image. buildx
-      # stores both in the image's index, so the index digest covers
-      # them.
+      # from the build above and nothing compiles. The bake file
+      # attaches two attestations to the image: an SBOM, which the
+      # pinned syft scanner writes from the crates that `cargo
+      # auditable` recorded in the binary and from the base's
+      # packages, and the build's provenance in max mode, which
+      # records the Dockerfile, the context's commit, and the digest of
+      # each base image. buildx stores both in the image's index, so
+      # the index digest covers them.
+      #
+      # The bake file writes the OCI labels and annotations from the
+      # four values below. SOURCE_DATE_EPOCH is the commit's time, which
+      # BuildKit uses as the image config's creation time in place of
+      # the wall clock, so the same commit builds the same config.
+      # --metadata-file is where bake writes the digest of the pushed
+      # index, which the next step signs.
       #
       # A release moves :latest. A development build pushes only its
       # own version, so :latest always names a release.
       - name: Push the image
         id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: liken/Dockerfile
-          push: true
-          sbom: generator=${{ env.SYFT_SCANNER }}
-          provenance: mode=max
-          cache-from: type=registry,ref=ghcr.io/liken-sh/corrosion:buildcache
-          tags: |
-            ghcr.io/liken-sh/corrosion:${{ env.VERSION }}
-            ${{ github.ref_type == 'tag' && 'ghcr.io/liken-sh/corrosion:latest' || '' }}
+        run: |
+          export SOURCE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          export REVISION="$GITHUB_SHA"
+          CREATED=$(git log -1 --format=%cI)
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export CREATED SOURCE_DATE_EPOCH
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export LATEST=true
+          fi
+          docker buildx bake --push --metadata-file "$RUNNER_TEMP/metadata.json" corrosion
+          echo "digest=$(jq -r '.corrosion["containerimage.digest"]' "$RUNNER_TEMP/metadata.json")" >> "$GITHUB_OUTPUT"
 
       # cosign signs keyless: it takes the job's OIDC token from the
       # two ACTIONS_ID_TOKEN_REQUEST variables, Fulcio certifies this
