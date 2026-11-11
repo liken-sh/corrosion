@@ -31,7 +31,8 @@ is a fetch from upstream and a push:
 commits, in this order:
 
 1. The bottom commits add the fork's own files and nothing else:
-   this directory, `AGENTS.md`, and `.github/workflows/liken.yaml`.
+   this directory, `AGENTS.md`, `docker-bake.hcl`,
+   `.github/workflows/liken.yaml`, and `.github/workflows/scan.yaml`.
 2. Each commit above them is one change to Corrosion. A change with
    a pull request against upstream names it in its commit message. A
    liken-only change says so in its message.
@@ -45,7 +46,7 @@ This list is the whole state of the fork. Keep it current.
 
 | commit | change | upstream |
 |---|---|---|
-| (bottom) | the fork's files: this directory, the workflow, `AGENTS.md` | never |
+| (bottom) | the fork's files: this directory, the workflows, `AGENTS.md` | never |
 | bc71014 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
 | ae779ab | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
 | 2e0a9155 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
@@ -141,6 +142,33 @@ and read the attestations of a digest with:
 The identity accepts only a run on the `liken` branch or at a
 release tag, because the workflow pushes from no other ref.
 
+## Vulnerability scans
+
+The repository's Security tab reports the known vulnerabilities in
+what the fork ships, from these sources:
+
+- Dependabot reads `Cargo.lock` on the `liken` branch and matches
+  each crate against the GitHub Advisory Database.
+- After each push, `liken.yaml` calls `.github/workflows/scan.yaml`,
+  which scans the image that the push published with Trivy and
+  uploads the findings under the code scanning category
+  `trivy/corrosion`. Trivy reads the Debian packages of the
+  distroless base and the crates that `cargo auditable` recorded in
+  the binary. It reports only a vulnerability that has a fixed
+  version.
+- `scan.yaml` also runs on a timer, on every third day of the month,
+  and scans the newest published image again. A vulnerability that
+  a database records after a publish reaches the Security tab only
+  at a later scan, and the databases publish no event that a
+  workflow can subscribe to. `gh workflow run scan.yaml` scans at
+  once, and `-f version=<version>` scans one version.
+- CodeQL's default setup, which the repository's code scanning
+  settings turn on, analyzes the Rust, Python, and Actions code of
+  the `liken` branch.
+
+The Trivy pin and the action pins follow the liken repository's
+`ci/trivy.go` and `ci/actions.go`.
+
 ## The build
 
 `liken/Dockerfile` builds in three stages with cargo-chef, so the
@@ -164,9 +192,9 @@ references the new digest.
 
 Upstream's workflows stay in the tree so that a sync never
 conflicts, and they are disabled in this repository's Actions
-settings. `liken.yaml` is the only workflow that runs here. A sync
-that brings a new upstream workflow needs one more `gh workflow
-disable`.
+settings. `liken.yaml` and `scan.yaml` are the only workflows that
+run here. A sync that brings a new upstream workflow needs one more
+`gh workflow disable`.
 
 ## Dropping back to upstream
 

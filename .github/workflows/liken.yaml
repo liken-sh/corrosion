@@ -1,7 +1,8 @@
-# The fork's own workflow. It builds the image at liken/Dockerfile and
-# publishes it to ghcr.io/liken-sh/corrosion. Upstream's workflows
-# stay in the tree untouched and are disabled in this repository's
-# Actions settings, so this is the only workflow that runs here.
+# The fork's own workflow. It builds the image at liken/Dockerfile,
+# publishes it to ghcr.io/liken-sh/corrosion, and scans what it
+# published with scan.yaml. Upstream's workflows stay in the tree
+# untouched and are disabled in this repository's Actions settings, so
+# this workflow and scan.yaml are the only workflows that run here.
 #
 # A pushed tag cuts a release: the tag names a version in liken's
 # calendar scheme, 2026.09.09-001, and the image ships under that tag
@@ -24,7 +25,7 @@ on:
     branches: [liken]
     tags: ["**"]
 
-# The workflow grants nothing by default. The one job below names the
+# The workflow grants nothing by default. Each job below names the
 # permissions it needs.
 permissions: {}
 
@@ -54,6 +55,8 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       # The checkout fetches the whole history, because git describe
       # below needs the tags.
@@ -71,13 +74,14 @@ jobs:
       # commits since it, and the first eight characters of the
       # commit sha make the build traceable.
       - name: Name the version
+        id: version
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "$GITHUB_REF_NAME" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{3}$' || {
               echo "the tag '$GITHUB_REF_NAME' is not a release version; a release tag looks like 2026.09.09-001"
               exit 1
             }
-            echo "VERSION=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+            version=$GITHUB_REF_NAME
           else
             if described=$(git describe --tags --long --match '[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]-[0-9][0-9][0-9]' 2>/dev/null); then
               release=${described%-*-g*}
@@ -89,8 +93,10 @@ jobs:
               release=0000.00.00-000
               count=$(git rev-list --count HEAD)
             fi
-            echo "VERSION=$(printf '%s-dev-%03d-%s' "$release" "$count" "${GITHUB_SHA:0:8}")" >> "$GITHUB_ENV"
+            version=$(printf '%s-dev-%03d-%s' "$release" "$count" "${GITHUB_SHA:0:8}")
           fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -170,3 +176,21 @@ jobs:
             -e DOCKER_CONFIG=/docker -v "$HOME/.docker:/docker:ro" \
             "$COSIGN" sign --yes "ghcr.io/liken-sh/corrosion@$DIGEST"
           echo "ghcr.io/liken-sh/corrosion:$VERSION@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  # Trivy scans the image that the job above pushed, by its version tag,
+  # and uploads the findings to code scanning. scan.yaml holds the scan.
+  # The release job holds the credentials that push and sign, so the
+  # scan runs in its own jobs, and the release job cannot write
+  # security events. These permissions are the most that the jobs of
+  # scan.yaml can hold. Each of those jobs names a subset, and only its
+  # trivy job, which uploads the findings, holds security-events: write.
+  scan:
+    needs: release
+    permissions:
+      actions: write
+      contents: read
+      packages: read
+      security-events: write
+    uses: ./.github/workflows/scan.yaml
+    with:
+      version: ${{ needs.release.outputs.version }}

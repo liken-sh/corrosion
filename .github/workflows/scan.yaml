@@ -1,0 +1,255 @@
+# The fork's vulnerability scan. Trivy scans one published image of
+# ghcr.io/liken-sh/corrosion for known vulnerabilities, and the
+# findings go to the repository's Security tab as code scanning
+# alerts under the category trivy/corrosion. The scan follows the scan
+# of the liken repository's images: the same Trivy release, the same
+# arguments, and the same daily cache of Trivy's database.
+#
+# liken.yaml calls this workflow after each push, with the version
+# that it pushed, so the Security tab holds the findings of each image
+# on the day that it was published. A vulnerability that a database
+# records after that day reaches the Security tab only at a later
+# scan, so a timer also runs this workflow and scans the newest
+# published image again. Each scan uploads under the same category,
+# so its findings replace the findings of the scan before it on the
+# same ref.
+#
+# Nothing builds or pushes, so a scan gives the image no new version.
+# A scan reports and never gates: a finding or a failed scan leaves
+# the run green.
+name: scan
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The version tag of ghcr.io/liken-sh/corrosion to scan.
+        required: true
+        type: string
+  # The vulnerability databases publish no event that a workflow can
+  # subscribe to, so a timer starts the scan. The timer is a backstop
+  # for one failure: without it, a vulnerability that NVD, GitHub, or
+  # Debian records after an image was published stays out of the
+  # Security tab until the fork publishes again. The scan runs at 04:43
+  # UTC on every third day of the month, the 1st, the 4th, and so on to
+  # the 31st, so two runs are one to three days apart. GitHub's load is
+  # highest at the start of each hour, and a scheduled run can then
+  # start late or not at all, so the minute is off the hour.
+  schedule:
+    - cron: "43 4 */3 * *"
+  # A run by hand scans at once, as after a published vulnerability
+  # that needs an answer before the next run. With no version, it scans
+  # the newest published image, as the timer does.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version tag to scan. Empty scans the newest published image.
+        required: false
+        type: string
+
+# The workflow grants nothing by default. Each job below names the
+# permissions it needs. When liken.yaml calls this workflow, the grant
+# of its calling job is the most that these jobs can hold.
+permissions: {}
+
+# Each action is pinned by the commit of a release, and the comment
+# names that release, at the same commits as the liken repository's
+# ci/actions.go.
+#
+# Trivy is pinned at the same version and digest as trivyVersion and
+# trivySHA256 in the liken repository's ci/trivy.go. Follow that pin.
+# The install checks the release archive against the digest before it
+# unpacks the binary, so a release that changed after the pin fails the
+# install.
+env:
+  TRIVY_VERSION: 0.76.1
+  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+
+jobs:
+  # The version names the image to scan. A call from liken.yaml or a run
+  # by hand names it. The timer names none, so this job reads the tags
+  # of the image from ghcr.io, with the anonymous token that any client
+  # of a public package receives, and takes the newest version. A
+  # version is a release, 2026.09.09-001, or a development build of
+  # one, 2026.09.09-001-dev-003-abcdef01. A development build sorts
+  # after its release and before the next release, so the last version
+  # in byte order is the newest image. The other tags, `latest`,
+  # `buildcache`, and the signatures' `sha256-` tags, are not versions.
+  version:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            token=$(curl -fsS --retry 5 --retry-all-errors "https://ghcr.io/token?scope=repository:liken-sh/corrosion:pull" | jq -r .token)
+            VERSION=$(curl -fsS --retry 5 --retry-all-errors -H "Authorization: Bearer $token" \
+                "https://ghcr.io/v2/liken-sh/corrosion/tags/list?n=10000" |
+              jq -r '.tags[]' |
+              grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{3}(-dev-[0-9]+-[0-9a-f]{8})?$' |
+              LC_ALL=C sort | tail -1)
+          fi
+          echo "the scan reads ghcr.io/liken-sh/corrosion:$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  # The scan needs Trivy's vulnerability database, about 140 MB to
+  # download and 1.7 GB on disk. Trivy builds it every 6 hours, and the
+  # database's metadata says it is current for 24 hours. A download on
+  # each run meets the registry's rate limit when runs are close
+  # together, so this job downloads the database once a day and saves it
+  # to the Actions cache under trivy-db-<day>. The scan restores the
+  # newest entry.
+  #
+  # Trivy reads the metadata of the restored database, and it downloads
+  # nothing while the database is current. When a restore fails, or
+  # restores a database that is no longer current, Trivy downloads its
+  # own, so a scan never depends on this job. Every step continues on an
+  # error, and the job never fails the run.
+  #
+  # Each entry takes about 140 MB of the repository's 10 GB Actions
+  # cache. A save deletes every older entry, so the cache holds one at a
+  # time.
+  trivy-db:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    # actions: write deletes the older entries of the cache.
+    permissions:
+      actions: write
+    steps:
+      - id: day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # The lookup reads only whether today's entry exists, and
+      # downloads nothing.
+      - id: lookup
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.day.outputs.day }}
+          lookup-only: true
+
+      # Trivy installs only when today's entry is missing.
+      - if: ${{ steps.lookup.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: |
+          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$archive"
+          echo "$TRIVY_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/trivy-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/trivy-bin" trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+
+      # Trivy writes the database under ~/.cache/trivy, the directory
+      # that every scan reads by default.
+      - id: download
+        if: ${{ steps.lookup.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        run: trivy image --download-db-only --cache-dir ~/.cache/trivy
+
+      - if: ${{ steps.download.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.day.outputs.day }}
+
+      - if: ${{ steps.download.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: trivy-db-${{ steps.day.outputs.day }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --key trivy-db- --limit 100 --json key --jq '.[].key' |
+            sort -u | { grep -vx "$KEEP" || true; } | while read -r key; do
+              gh cache delete "$key" --repo "$GITHUB_REPOSITORY"
+            done
+
+  # The scan reads the image from the registry by its version tag. The
+  # workflow never pushes a version tag twice, so the tag names the
+  # bytes that a cluster pulls. Trivy reads the Debian package records
+  # of the distroless base and the crate list that `cargo auditable`
+  # records in the binary, and looks for known vulnerabilities only:
+  # GitHub's secret scanning reads the repository that the image is
+  # built from. It reports only a vulnerability that has a fixed
+  # version, because a finding that no release fixes gives the fork
+  # nothing to act on.
+  #
+  # Two scans at once would upload the same category in either order,
+  # and the older image's findings could replace the newer's. The
+  # concurrency group runs one scan at a time.
+  trivy:
+    name: trivy corrosion
+    needs: [version, trivy-db]
+    if: ${{ !cancelled() && needs.version.outputs.version != '' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    continue-on-error: true
+    concurrency:
+      group: trivy-corrosion
+    # contents: read checks out the commit, which the upload names as
+    # the commit of the findings. packages: read lets the login below
+    # read the image if the package is ever not public.
+    # security-events: write uploads the findings.
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # A login that fails leaves the scan to read the public image
+      # without one.
+      - continue-on-error: true
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # The database that the trivy-db job saved.
+      - id: trivy-day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.trivy-day.outputs.day }}
+          restore-keys: trivy-db-
+
+      # An install that fails here makes the scan fail, and the scan
+      # prints a warning and the job goes on.
+      - continue-on-error: true
+        run: |
+          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$archive"
+          echo "$TRIVY_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/trivy-bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/trivy-bin" trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+
+      - name: scan
+        env:
+          IMAGE: ghcr.io/liken-sh/corrosion:${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p trivy
+          trivy image --scanners vuln --ignore-unfixed --format sarif --output trivy/corrosion.sarif "$IMAGE" ||
+            echo "::warning::the Trivy scan of $IMAGE failed, and the run goes on"
+
+      # Code scanning keeps the results of each category on each ref,
+      # and it closes an alert only when a later upload in the same
+      # category on the same ref no longer reports it. The step runs
+      # when the scan wrote its file.
+      - if: ${{ !cancelled() && hashFiles('trivy/corrosion.sarif') != '' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy/corrosion.sarif
+          category: trivy/corrosion
