@@ -620,6 +620,55 @@ impl DerefMut for Engine {
     }
 }
 
+impl Engine {
+    /// Compiles a template that renders with [`Template::render`].
+    ///
+    /// This shadows `rhai_tpl::Engine::compile_mut`, whose `render` leaves
+    /// the type of the program's result to inference. Since Rust 1.100 the
+    /// fallback for that type is `!` instead of `()`, so rhai fails every
+    /// render with `ErrorMismatchOutputType("!", "()")`
+    /// (https://github.com/rust-lang/rust/pull/155499).
+    pub fn compile_mut(&mut self, input: &str) -> Result<Template<'_>, rhai_tpl::CompileError> {
+        let ast = self.engine._compile(input)?;
+        Ok(Template {
+            evaluator: &mut self.engine,
+            ast,
+        })
+    }
+}
+
+/// A compiled template and the engine that renders it.
+pub struct Template<'a> {
+    evaluator: &'a mut rhai::Engine,
+    ast: rhai::AST,
+}
+
+impl Template<'_> {
+    pub fn evaluator_mut(&mut self) -> &mut rhai::Engine {
+        self.evaluator
+    }
+
+    /// Renders the template into the writer, as `rhai_tpl::Template::render`
+    /// does, with the program's result typed as `()`.
+    pub fn render<W: Writer>(
+        &self,
+        w: W,
+        state: TemplateState,
+    ) -> Result<TemplateWriter<W, TemplateState>, Box<EvalAltResult>> {
+        let mut scope = rhai::Scope::new();
+        let mut w = TemplateWriter::new(w, state);
+        scope.push("__tpl_writer", w.clone());
+
+        self.evaluator
+            .eval_ast_with_scope::<()>(&mut scope, &self.ast)?;
+
+        w.flush()
+            .map_err(|e| Box::new(EvalAltResult::from(e.to_string())))?;
+
+        Ok(w)
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 struct JsonOutput {
     pretty: bool,
