@@ -70,9 +70,15 @@ EOF
 
 WORKDIR /usr/src/corrosion
 
+# The recipe is written at the root of the filesystem, outside the
+# source tree. The final build compiles in a tree that is a git
+# checkout, and `crates/corrosion/build.rs` appends `.dirty` to the
+# version when `git status --porcelain` prints anything there. A
+# `recipe.json` inside the tree would be an untracked file and would
+# mark every release dirty.
 FROM chef AS planner
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef prepare --recipe-path /recipe.json
 
 FROM chef AS build
 
@@ -81,14 +87,14 @@ FROM chef AS build
 # dependency built with other flags would compile a second time.
 COPY .cargo .cargo
 COPY rust-toolchain.toml .
-COPY --from=planner /usr/src/corrosion/recipe.json recipe.json
+COPY --from=planner /recipe.json /recipe.json
 
 # Upstream's release profile keeps debug information, which makes the
 # binary 314 MiB. The environment variable overrides that one profile
 # setting in both cargo runs, so the image contains the stripped binary
 # and Cargo.toml remains as upstream wrote it.
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
-    CARGO_PROFILE_RELEASE_STRIP=true cargo chef cook --release --locked --bin corrosion --recipe-path recipe.json
+    CARGO_PROFILE_RELEASE_STRIP=true cargo chef cook --release --locked --bin corrosion --recipe-path /recipe.json
 
 # `cargo auditable` wraps rustc only for the workspace's own crates,
 # so the dependencies that the cook compiled with plain cargo keep
