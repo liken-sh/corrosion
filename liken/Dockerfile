@@ -103,7 +103,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 # because the binary contains a prebuilt cr-sqlite shared object and
 # loads it at run time, and that object links against
 # glibc and libgcc. A static musl binary could not load it.
-FROM gcr.io/distroless/cc-debian13@sha256:e1f5543d45a2cd7c02a5b43dda5f0ff30729b4832113759d01ed39b0b152cddb
+FROM gcr.io/distroless/cc-debian13@sha256:dac90a25ffe03ebaace90cda886b081e61ab6cd77ac47eda51f7bcc15c320765
 
 COPY --from=build /usr/src/corrosion/target/release/corrosion /corrosion
 
