@@ -47,19 +47,19 @@ This list is the whole state of the fork. Keep it current.
 | commit | change | upstream |
 |---|---|---|
 | (bottom) | the fork's files: this directory, the workflows, `AGENTS.md` | never |
-| bc71014 | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564) |
-| ae779ab | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573) |
-| 2e0a9155 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
-| bb59e791 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
-| c919321b | hickory-resolver, hickory-proto, and hickory-net move to 0.26.3 in the lockfile, for the resolver's CNAME, truncation-retry, and DNSSEC advisories | liken only |
-| 2ed51b4c | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory | liken only |
-| b2c6b84d | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | not sent |
-| d14e5596 | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | not sent |
-| b8f71e33 | adds `gossip.restore_members`; when false, an agent deletes the members it stored instead of loading them at start, so a short-lived agent does not revive members that are gone | liken only |
-| 3e02630d | cargo-platform moves to 0.3.3 in the lockfile, which needs Rust 1.91, older than the Rust that the image builds with | liken only |
-| dd6beaf1 | rustls, thin-vec, time, and rand move to patched releases in the lockfile; serde_with moves to 3.24, opentelemetry to 0.33 with tracing-opentelemetry 0.34, and rcgen to 0.14, which removes ring 0.16; the certificate generators port to the rcgen 0.14 API | liken only |
-| cfcfb566 | every crate in the lockfile moves to its newest semver-compatible release, including the advisory fixes in tokio, h2, anyhow, crossbeam-epoch, ctutils, and libz-sys | liken only |
-| 72f8e074 | zstd moves to 0.14 with zstd-safe 8, and circular-buffer to 2.0, for their advisories; the RTT window takes the renamed `FixedCircularBuffer` | liken only |
+| 34518fd | stream forwarders wait for events and disconnects instead of polling; adds `perf.stream_flush_timeout` | [superfly/corrosion#564](https://github.com/superfly/corrosion/pull/564), closed unmerged |
+| 69183d8 | adds `gossip.remove_down_after_secs` to configure how long gossip retains a down member and keeps sending it announcements; defaults to two days | [superfly/corrosion#573](https://github.com/superfly/corrosion/pull/573), closed unmerged |
+| 1be17143 | the buffered-change sweep clears every orphaned version at startup and on each five-minute tick, not one per tick; the tick is a backstop for clears that a running agent drops, which no event reports | liken only |
+| afa07c10 | the orphan sweep runs its chunks back to back; only the live clear keeps the two-second pause | liken only |
+| a2548b54 | build-info and build-info-build move to 0.0.47, which builds against git2 0.21 for git2's Buf advisory | liken only |
+| 0a1ccf7c | the SWIM sender runs until the runtime loop drops its channel, so the leave announcement goes out after SIGTERM | not sent |
+| f3bb5ebe | a leaving agent gossips its down update to every member and waits up to five seconds for each to confirm with `TurnUndead`, instead of sleeping five seconds | not sent |
+| a07cc75b | adds `gossip.restore_members`; when false, an agent deletes the members it stored instead of loading them at start, so a short-lived agent does not revive members that are gone | liken only |
+| 09177c54 | cargo-platform moves to 0.3.3 in the lockfile, which needs Rust 1.91, older than the Rust that the image builds with | liken only |
+| 437e46fa | rustls, thin-vec, time, and rand move to patched releases in the lockfile; serde_with moves to 3.24, opentelemetry to 0.33 with tracing-opentelemetry 0.34, and rcgen to 0.14, which removes ring 0.16; the certificate generators port to the rcgen 0.14 API | liken only |
+| d245ed6a | every crate in the lockfile moves to its newest semver-compatible release, including the advisory fixes in tokio, h2, anyhow, crossbeam-epoch, ctutils, and libz-sys | liken only |
+| 71b53b7c | zstd moves to 0.14 with zstd-safe 8, and circular-buffer to 2.0, for their advisories; the RTT window takes the renamed `FixedCircularBuffer` | liken only |
+| 11ff9f0a | corro-tpl renders a template with its result typed as `()`, because Rust 1.100 infers `!` for the untyped result of `rhai_tpl::Template::render` and every render fails | not sent |
 
 The upstream column lists the pull request, `liken only` for a
 change that serves only liken's use, or `not sent` for a universal
